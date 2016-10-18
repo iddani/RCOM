@@ -6,6 +6,9 @@
 #include <termios.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <signal.h>
 
 #define BAUDRATE B38400
 #define _POSIX_SOURCE 1 /* POSIX compliant source */
@@ -13,16 +16,68 @@
 #define TRUE 1
 #define FLAG 0x7E
 #define ADDRESS	0x03
-#define CONTROL 0x07
-#define BCC 0x03
+#define CONTROL 0x03
+#define BCC 0x06
+
+
 
 volatile int STOP=FALSE;
+volatile int waitFlag = TRUE;
+
+void signalHandlerIO( int status){
+	waitFlag = FALSE;
+}
+
+int readByte(char byte, int status){
+	switch(status){
+		case 0:
+			if(byte == FLAG){
+				return 1;
+			} else return 0;
+			break;
+
+		case 1:
+			if(byte != FLAG){
+				return 2;
+			} else return 1;
+			break;
+
+		case 2:
+			if(byte == FLAG){
+				return 3;
+			} else return 2;
+			break;
+	}
+
+}
+
+int isSetup(char *msg){
+	if(msg[3] != (msg[2]^msg[1])){
+		return -1;	//back to start
+	} else{
+		if(msg[2] == CONTROL){
+			return TRUE;
+		} else{
+			return 0;	//proceed for different control
+		}
+	}
+}
+
+int sendUA(int fd){
+	char responseUA[5];
+	responseUA[0] = FLAG;
+	responseUA[1] = ADDRESS;
+	responseUA[2] = CONTROL;
+	responseUA[3] = ADDRESS^CONTROL;
+	responseUA[4] = FLAG;
+
+	res = write(fd,responseUA,5);
+}
 
 int main(int argc, char** argv)
 {
     int fd,c, res;
     struct termios oldtio,newtio;
-    char buf[255];
 
     if ( (argc < 2) || 
   	     ((strcmp("/dev/ttyS0", argv[1])!=0) && 
@@ -58,13 +113,24 @@ int main(int argc, char** argv)
     newtio.c_cc[VMIN]     = 0;   /* blocking read until 5 chars received */
 
 		
-	//write(fd, 
+	struct sigaction action;
+    action.sa_handler = signalHandlerIO;
+    if (sigaction(SIGIO,&action, NULL) < 0)
+    {
+        fprintf(stderr,"Unable to install SIGIO handler\n");
+        exit(3);
+	}
+
+    fcntl(fd, F_SETOWN, getpid());
+    fcntl(fd, F_SETFL, FASYNC);
+
+
 
 
 
   /* 
     VTIME e VMIN devem ser alterados de forma a proteger com um temporizador a 
-    leitura do(s) próximo(s) caracter(es)
+    leitura do(s) prÃ³ximo(s) caracter(es)
   */
 
 /* TP1*/
@@ -79,34 +145,39 @@ int main(int argc, char** argv)
     printf("New termios structure set\n");
 
 
-	char novo[255] ;
-	int nChar=0;
-
+	char msg[20];
+	int msgLength = 0, status = 0;
+	char buf;
+	int a;
 
 	while (STOP==FALSE) {       // loop for input 
-		if((res = read(fd,buf,1)) > 0){   // returns after 0 chars have been input 
-			buf[res]=0;               // so we can printf... 
-			//printf(":%s:%d\n", buf, res);
-			novo[nChar]=buf[0];
-			nChar++;
-			
-			if (buf[0]=='\0') 
-				STOP=TRUE;
-		
+		write(1, ".", 1); usleep(100000);
+
+		if(waitFlag == FALSE){
+			if((res = read(fd,&buf,1)) > 0){   // returns after 0 chars have been input 
+				status = readByte(buf, status);
+				msg[msgLength] = buf;
+				msgLength++;
+				if(status == 3){
+					if(isSetup(msg) == TRUE){
+						sendUA(fd)
+						STOP = TRUE;
+
+						printf("Setup aknowlegded. Sending UA\n");
+					} else {
+						msgLength = 0;
+					}
+				}
+
+			}
+			else if (res < 0){
+				printf("hey %d\n", errno);
+			}
 		}
     }
 
-	printf("%s\n",novo);
-	char msg[255];
-printf("teste\n");
-	printf("a enviar:%x%x%x%x%x\n", 
-			FLAG, ADDRESS, CONTROL, ADDRESS, CONTROL, FLAG);
-
-	res = write(fd,msg,255);
-	printf("Sent %d bites\n", res);
-
   /* 
-    O ciclo WHILE deve ser alterado de modo a respeitar o indicado no guião 
+    O ciclo WHILE deve ser alterado de modo a respeitar o indicado no guiÃ£o 
   */
 
 
@@ -115,3 +186,5 @@ printf("teste\n");
     close(fd);
     return 0;
 }
+
+
