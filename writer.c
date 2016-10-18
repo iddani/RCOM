@@ -72,7 +72,11 @@ int isUA(char *msg){
 	}
 }
 
-char* createStartFrame(int fd){
+int disconnect(fd){
+	
+}
+
+char* createStartFrame(int fd, char *name){
 
 	//fileInfo
 	struct stat s;
@@ -92,8 +96,40 @@ char* createStartFrame(int fd){
 	packet[6] = 0x02;		//number of bytes
 	packet[7] = s.st_size;
 	packet[9] = 0x01;		//name
-	packet[10] = 0x01;
-	packet[11] = 0x01;
+	packet[10] = 0x01;		//number of bytes
+	packet[11] = name;		//value
+
+printf("%x\n", s.st_size);
+	printf("%x\n", packet[7]);
+	printf("%x\n", packet[8]);
+
+	return packet;
+}
+
+char* createEndFrame(int fd, char *name){
+
+	//fileInfo
+	struct stat s;
+	if (fstat(fd, &s) == -1) {
+  		printf("fstat(%d) returned error=%d.", fd, errno);
+	}
+
+	char packet[20];
+	packet[0] = FLAG;
+	packet[1] = ADDRESS_SEND;
+	ns = (ns^COUNTER);
+	packet[2] = ns;
+	packet[3] = (packet[1]^packet[2]);	//BCC
+	//Data
+	packet[4] = 0x03;		//end
+	packet[5] = 0x00;		//type
+	packet[6] = 0x02;		//number of bytes
+	packet[7] = s.st_size;
+	packet[9] = 0x01;		//name
+	packet[10] = 0x01;		//number of bytes
+	packet[11] = name;		//value
+
+
 
 printf("%x\n", s.st_size);
 	printf("%x\n", packet[7]);
@@ -216,7 +252,30 @@ int main(int argc, char** argv)
 
 
 	int gif = open("pinguim.gif", O_RDONLY);
-	createStartFrame(gif);
+	createStartFrame(gif,"pinguim.gif" );
+
+	char pic;
+	char data[255];
+	int it = 0;
+
+	while(it < 255){
+		llread( gif, pic, 1);
+		if(pic == FLAG){
+			data[it] = 0x7D;
+			data[++it] = 0x5E;
+		} else if (pic == 0x7D{
+			data[it] = 0x7D;
+			data[++it] = 0x5D;
+		} else{
+			data[it] = pic;
+		}
+		it++;
+
+		if(it == 255){
+			createSendFrame();
+			it =0;
+		}
+	}
 
 
     if ( tcsetattr(fd,TCSANOW,&oldtio) == -1) {
