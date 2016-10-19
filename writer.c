@@ -50,6 +50,58 @@ int readByte(char byte, int status){
 	}
 }
 
+char * byteStuffing(int fd){
+
+	int it = 0;
+	int tentativas = 0;
+	char * data;
+
+	while(res > 0){
+
+		char byte;
+		int res = read(fd, byte, 1);
+
+		if(res <= 0){
+			printf("Erro ao ler o ficheiro\n");
+			break;
+		}
+
+		if(byte == FLAG){
+			data[it] = 0x7D;
+			data[++it] = 0x5E;
+		} else if (byte == 0x7D){
+			data[it] = 0x7D;
+			data[++it] = 0x5D;
+		} else{
+			data[it] = byte;
+		}
+		it++;
+
+	}
+
+}
+
+char * byteDestuffing(char * data, int size){
+
+	char * destuffed;
+	int i = 0;
+	for (; i < size; ++i){
+
+		if(data[i] == 0x7D && data[i+1] == 0x5E){
+			destuffed[i] = 0x7E;
+			continue;
+		}
+		if(data[i] == 0x7D && data[i+1] == 0x5D){
+			destuffed[i] = 0x7D;
+			continue;
+		}
+		destuffed[i] = data[i];
+
+	}
+
+	return destuffed;
+
+}
 
 ControlType analyse(char *msg){
 
