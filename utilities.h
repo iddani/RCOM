@@ -29,7 +29,7 @@ typedef enum{
 
 
 typedef enum {
-	SET, DISC, UA, RR, REJ 
+	SET, DISC, UA, RR, REJ, NONE
 }ControlType;
 
 struct applicationLayer {

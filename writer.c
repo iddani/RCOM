@@ -19,6 +19,7 @@ unsigned int again = FALSE;
 unsigned int ns = 0x00;
 struct termios oldtio,newtio;
 struct applicationLayer appLayer;
+struct linkLayer lLayer;
 
 void alarm_handler(int signo)
 {
@@ -56,15 +57,15 @@ ControlType analyse(char *msg){
 	if(bcc != (address^control)){
 		return -1;
 	} else {
-		if(control == CTRL_SET){
-			return SET;
-		} else {
-			return 0;
-		}
+		return control;
 	}
 }
 
-int sendMessage(ControlType type, char *msg){
+int readIFrames(){
+
+}
+
+int sendMessage(ControlType waitFor, char *msg){
 	char buf;
 	char ans[20];
 	int ansLength = 0, status = 0;
@@ -84,10 +85,13 @@ int sendMessage(ControlType type, char *msg){
 				ansLength++;
 
 				if(status == 3){
-					if(analyse(msg) == TRUE){
+					ControlType type = analyse(msg);
+					if(type == waitFor){
 						STOP = TRUE;
 						printf("Disconnect aknowledged\n");
-						//alarm(0)		//desativa flag
+						alarm(0);		//desativa flag
+					} else {
+						ansLength = 0;
 					}
 				}
 					
@@ -164,15 +168,67 @@ char *createSUFrame(ControlType type){
 
 int llopen(int gate, ConnectionMode connection){
 
-	char port[10];
-	if(gate == 0){
-		sprintf(port, "/dev/ttyS0");
-	} else if(gate == 1){
-		sprintf(port, "/dev/ttyS1");
-	}
-	printf("%s\n", port);
+    printf("New termios structure set\n");
+	
+	char msg = createSUFrame(SET);
+	sendMessage(SET,msg);
+	return fd;	
+}
 
-	int fd = open(port, O_RDWR | O_NOCTTY );
+
+int llclose(int fd){
+	char msg = createSUFrame(DISC);
+
+	sendMessage(DISC, msg);
+
+}
+
+
+int main(int argc, char** argv)
+{
+    int fd, res;
+    int sum = 0, speed = 0;
+
+    
+    if ( (argc < 3) || 
+  	     ((strcmp("/dev/ttyS0", argv[1])!=0) && 
+  	      (strcmp("/dev/ttyS1", argv[1])!=0) )) {
+      printf("Usage:\tnserial SerialPort ConnectionMode Ba\n\tex: nserial /dev/ttyS1 TRANSMITTER||RECEIVER\n");
+      exit(1);
+    }
+
+    ConnectionMode connection;
+    int gate;
+    if(strcmp("/dev/ttyS0", argv[1])==0){
+    	gate = 0;
+    } else if(strcmp("/dev/ttyS1", argv[1])==0){
+    	gate = 1;
+    } else{
+   	printf("SerialPort not recognized\n\tuse: /dev/ttyS0 || /dev/ttyS1\n");
+      	exit(1);
+    }
+
+    if(strcmp("TRANSMITTER", argv[2])==0){
+    	appLayer.transmission = TRANSMITTER;
+	} else if(strcmp("RECEIVER", argv[2])==0){
+		appLayer.transmission = RECEIVER;
+	} else{
+		printf("ConnectionMode not recognized\n\tuse: TRANSMITTER||RECEIVER\n");
+      		exit(1);
+	}
+
+    struct sigaction action;
+    action.sa_handler = alarm_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+
+    if (sigaction(SIGALRM,&action, NULL) < 0)
+    {
+        fprintf(stderr,"Unable to install SIGALRM handler\n");
+        exit(1);
+    }
+
+    int fd = open(port, O_RDWR | O_NOCTTY );
 
     if (fd <0) {perror(port); exit(-1); }
 
@@ -208,96 +264,9 @@ int llopen(int gate, ConnectionMode connection){
     if ( tcsetattr(fd,TCSANOW,&newtio) == -1) {
       perror("tcsetattr");
       exit(-1);
+
     }
 
-    printf("New termios structure set\n");
-	
-
-
-	char msg = createSUFrame(SET);
-	char buf;
-	char ans[20];
-	int ansLength = 0, status = 0;
-	int res = 0;
-
-	while((STOP == FALSE) && (timeouts < 3)){
-		again = 1;
-		res = write(fd, msg, 6);
-		printf("Wrote %d bytes to fd\n", res);
-		alarm(3);
-		
-		do{
-			if(res = read(fd, &buf, 1)){
-				status = readByte(buf, status);
-				ans[ansLength] = buf;
-				ansLength++;
-
-				if(status == 3){ ;
-					if(analyse(msg) == TRUE){
-						STOP = TRUE;
-						printf("Connection aknowledged\n");
-					}
-				}
-					
-			}
-		}while(again == TRUE && STOP == FALSE);
-	}
-	return fd;	
-}
-
-
-int llclose(int fd){
-	char msg = createSUFrame(DISC);
-
-	sendMessage(DISC, msg);
-
-
-}
-
-
-int main(int argc, char** argv)
-{
-    int fd, res;
-    int sum = 0, speed = 0;
-
-    
-    if ( (argc < 3) || 
-  	     ((strcmp("/dev/ttyS0", argv[1])!=0) && 
-  	      (strcmp("/dev/ttyS1", argv[1])!=0) )) {
-      printf("Usage:\tnserial SerialPort ConnectionMode\n\tex: nserial /dev/ttyS1 TRANSMITTER||RECEIVER\n");
-      exit(1);
-    }
-
-    ConnectionMode connection;
-    int gate;
-    if(strcmp("/dev/ttyS0", argv[1])==0){
-    	gate = 0;
-    } else if(strcmp("/dev/ttyS1", argv[1])==0){
-    	gate = 1;
-    } else{
-   		printf("SerialPort not recognized\n\tuse: /dev/ttyS0 || /dev/ttyS1\n");
-      	exit(1);
-    }
-
-    if(strcmp("TRANSMITTER", argv[2])==0){
-    	appLayer.transmission = TRANSMITTER;
-	} else if(strcmp("RECEIVER", argv[2])==0){
-		appLayer.transmission = RECEIVER;
-	} else{
-		printf("ConnectionMode not recognized\n\tuse: TRANSMITTER||RECEIVER\n");
-      	exit(1);
-	}
-
-    struct sigaction action;
-    action.sa_handler = alarm_handler;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = 0;
-
-    if (sigaction(SIGALRM,&action, NULL) < 0)
-    {
-        fprintf(stderr,"Unable to install SIGALRM handler\n");
-        exit(1);
-    }
 
     appLayer.fd = llopen(gate, connection);
 
