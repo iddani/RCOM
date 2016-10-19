@@ -68,10 +68,10 @@ int sendUA(int fd){
 	responseUA[0] = FLAG;
 	responseUA[1] = ADDRESS;
 	responseUA[2] = CONTROL;
-	responseUA[3] = ADDRESS^CONTROL;
+	responseUA[3] = (ADDRESS^CONTROL);
 	responseUA[4] = FLAG;
 
-	res = write(fd,responseUA,5);
+	write(fd,responseUA,5);
 }
 
 int main(int argc, char** argv)
@@ -160,7 +160,7 @@ int main(int argc, char** argv)
 				msgLength++;
 				if(status == 3){
 					if(isSetup(msg) == TRUE){
-						sendUA(fd)
+						sendUA(fd);
 						STOP = TRUE;
 
 						printf("Setup aknowlegded. Sending UA\n");
