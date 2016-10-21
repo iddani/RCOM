@@ -5,7 +5,7 @@
 volatile int STOP=FALSE;
 unsigned int frameSize;
 unsigned int timeouts = 0;
-unsigned int again = FALSE;
+volatile int again = TRUE;
 unsigned int ns = 0x00;
 struct termios oldtio,newtio;
 struct applicationLayer appLayer;
@@ -93,9 +93,12 @@ char * byteDestuffing(char * data, int size){
 
 }
 
-ControlType analyse(char *msg){
+char analyse(char msg[]){
 
 	char address = msg[1], control = msg[2], bcc = msg[3];
+	printf("%x\n", address);
+	printf("%x\n", control);
+	printf("%x\n", bcc);
 	if(bcc != (address^control)){
 		return -1;
 	} else {
@@ -107,12 +110,11 @@ int sendMessage(char *msg){
 
 	int res = 0;
 
-	while((STOP == FALSE) && (timeouts < lLayer.numTransmissions)){
-		again = TRUE;
+	//while((STOP == FALSE) && (timeouts < 3)){
+		//again = TRUE;
 		res = write(appLayer.fd, msg, 6);
 		printf("Wrote %d bytes to fd\n", res);
-		alarm(3);
-	}
+	//}
     return -1;
 }
 
@@ -122,7 +124,7 @@ int readMessage(char *answer){
     int res;
     again = TRUE;
 
-    while(again == TRUE && STOP == FALSE){
+    while(again == TRUE){
         if((res = read(appLayer.fd, &buf, 1)) > 0){
             status = readByte(buf, status);
             answer[ansLength] = buf;
@@ -175,9 +177,9 @@ char *createControlPacket(int type){
 	return packet;
 }
 
-char *createSUFrame(ControlType type){
+char *createSUFrame(ControlType type, char *frame){
 
-    char *frame = malloc(sizeof(char) * CONTROL_PCK_SIZE);
+    //char *frame = malloc(sizeof(char) * 6);
 	frame[0] = FLAG;
 	frame[4] = FLAG;
 	frame[5] = '\0';
@@ -226,37 +228,50 @@ int llread(){
 int llopen(int gate, ConnectionMode connection){
 
     char answer[5];
-	char *msg = createSUFrame(SET);
-    while (again == TRUE && timeouts < lLayer.numTransmissions) {
+	char msg[5];
+	createSUFrame(SET, msg);
+	STOP = FALSE;
+	int res = 0;
+    while (STOP == FALSE && timeouts < 3) {
         sendMessage(msg);
-        alarm(lLayer.timeout);
-        readMessage(answer);
-
+        alarm(3);
+        res = readMessage(answer);
+		printf("res: %x\n",answer[0]);
+		printf("res: %x\n",answer[1]);
+		printf("res: %x\n",answer[2]);
+		printf("res: %x\n",answer[3]);
+		printf("res: %x\n",answer[4]);
+		
+		if(analyse(answer) == CTRL_UA){
+			printf("Recognized UA\n");
+			STOP = TRUE;
+		}
     }
 
-    free(msg);
-    if(analyse(answer) != UA){
-        return -1;
-    } else
+    //free(msg);
+    //if(analyse(answer) != UA){
+    //    return -1;
+    //} else
     return gate;
 }
 
 /*  Envia DISC e espera por UA ou por DISC dependendo se emite ou recebe*/
 int llclose(int fd){
     char answer[5];
-	char *msg = createSUFrame(DISC);
+	char msg[5];// = createSUFrame(DISC);
+	createSUFrame(DISC, msg);
     while(STOP == FALSE){
         STOP = FALSE;
 	    sendMessage(msg);
         alarm(3);
         readMessage(answer);
     }
-    free(msg);
+    //free(msg);
     if(appLayer.transmission == TRANSMITTER){
         if(analyse(answer) == DISC){
-            msg = createSUFrame(UA);
+            //msg = createSUFrame(UA);
             sendMessage(msg);
-            free(msg);
+            //free(msg);
             close(fd);
         }
     } else if(appLayer.transmission == RECEIVER){
@@ -278,7 +293,7 @@ int transfer(){
     }
 
 
-    msg = createSUFrame(START);
+    //msg = createSUFrame(START);
     createDataPacket(fd);
 
 
@@ -291,7 +306,7 @@ int receive(){
 
 int main(int argc, char** argv) {
 
-    int fd;
+    //int fd;
     int sum = 0, speed = 0;
 
 
@@ -332,15 +347,15 @@ int main(int argc, char** argv) {
         exit(1);
     }
 
-    fd = open(argv[1], O_RDWR | O_NOCTTY );
+    appLayer.fd = open(argv[1], O_RDWR | O_NOCTTY );
 
-    if (fd <0) {perror(argv[1]); exit(-1); }
+    if (appLayer.fd <0) {perror(argv[1]); exit(-1); }
 
     /*
     Open serial port device for reading and writing and not as controlling tty
     because we don't want to get killed if linenoise sends CTRL-C.
   	*/
-    if ( tcgetattr(fd,&oldtio) == -1) { /* save current port settings */
+    if ( tcgetattr(appLayer.fd,&oldtio) == -1) { /* save current port settings */
       	perror("tcgetattr");
       	exit(-1);
     }
@@ -363,16 +378,16 @@ int main(int argc, char** argv) {
   	*/
 
 
-    tcflush(fd, TCIOFLUSH);
+    tcflush(appLayer.fd, TCIOFLUSH);
 
-    if ( tcsetattr(fd,TCSANOW,&newtio) == -1) {
+    if ( tcsetattr(appLayer.fd,TCSANOW,&newtio) == -1) {
       perror("tcsetattr");
       exit(-1);
 
     }
 
 
-    appLayer.fd = llopen(gate, appLayer.transmission);
+    llopen(gate, appLayer.transmission);
 
 
 
@@ -407,11 +422,12 @@ int main(int argc, char** argv) {
 	}
 */
 
-    if ( tcsetattr(fd,TCSANOW,&oldtio) == -1) {
+    if ( tcsetattr(appLayer.fd,TCSANOW,&oldtio) == -1) {
+		
       perror("tcsetattr");
       exit(-1);
     }
 
-    close(fd);
+    close(appLayer.fd);
     return 0;
 }
