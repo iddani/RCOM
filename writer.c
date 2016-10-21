@@ -1,19 +1,9 @@
 /*Non-Canonical Input Processing*/
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <termios.h>
-#include <stdio.h>
-#include <errno.h>
-#include <stdlib.h>
-#include <string.h>
-#include <signal.h>
-#include <pthread.h>
-#include <unistd.h>
 #include "utilities.h"
 
 volatile int STOP=FALSE;
+unsigned int frameSize;
 unsigned int timeouts = 0;
 unsigned int again = FALSE;
 unsigned int ns = 0x00;
@@ -48,18 +38,18 @@ int readByte(char byte, int status){
 			} else return 2;
 			break;
 	}
+    return -1;
 }
 
-char * byteStuffing(int fd){
+int byteStuffing(int fd, char *data){
 
 	int it = 0;
-	int tentativas = 0;
-	char * data;
+	//char * data = malloc(sizeof(char) * lLayer.maxFrames * 2);
+    int res;
 
-	while(res > 0){
-
+	do {
 		char byte;
-		int res = read(fd, byte, 1);
+		res = read(fd, &byte, 1);
 
 		if(res <= 0){
 			printf("Erro ao ler o ficheiro\n");
@@ -77,13 +67,13 @@ char * byteStuffing(int fd){
 		}
 		it++;
 
-	}
-
+	} while(it < lLayer.maxFrames);
+    return 0;
 }
 
 char * byteDestuffing(char * data, int size){
 
-	char * destuffed;
+	char * destuffed = malloc(sizeof(char) * frameSize);
 	int i = 0;
 	for (; i < size; ++i){
 
@@ -113,43 +103,46 @@ ControlType analyse(char *msg){
 	}
 }
 
-int readIFrames(){
+int sendMessage(char *msg){
 
-}
-
-int sendMessage(ControlType waitFor, char *msg){
-	char buf;
-	char ans[20];
-	int ansLength = 0, status = 0;
 	int res = 0;
 
-	while((STOP == FALSE) && (timeouts < 3)){
-		again = 1;
+	while((STOP == FALSE) && (timeouts < lLayer.numTransmissions)){
+		again = TRUE;
 		res = write(appLayer.fd, msg, 6);
 		printf("Wrote %d bytes to fd\n", res);
-
 		alarm(3);
-		
-		while(again == TRUE && STOP == FALSE){
-			if(res = read(appLayer.fd, &buf, 1)){
-				status = readByte(buf, status);
-				ans[ansLength] = buf;
-				ansLength++;
-
-				if(status == 3){
-					ControlType type = analyse(msg);
-					if(type == waitFor){
-						STOP = TRUE;
-						printf("Disconnect aknowledged\n");
-						alarm(0);		//desativa flag
-					} else {
-						ansLength = 0;
-					}
-				}
-					
-			}
-		};
 	}
+    return -1;
+}
+
+int readMessage(char *answer){
+    char buf;
+	int ansLength = 0, status = 0;
+    int res;
+    again = TRUE;
+
+    while(again == TRUE && STOP == FALSE){
+        if((res = read(appLayer.fd, &buf, 1)) > 0){
+            status = readByte(buf, status);
+            answer[ansLength] = buf;
+            ansLength++;
+
+            if(status == 3){
+                if(answer[3]==(answer[1]^answer[2])){
+                    return 0;
+                }
+                else ansLength = 0;
+            }
+        }
+    }
+    return -1;
+}
+
+char *createDataPacket(int fd){
+    char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
+    byteStuffing(fd, data);
+    return data;
 }
 
 char *createControlPacket(int type){
@@ -159,7 +152,7 @@ char *createControlPacket(int type){
   		printf("fstat(%d) returned error=%d.", appLayer.fd, errno);
 	}
 
-	char packet[10];
+	char *packet = malloc(sizeof(char) * CONTROL_PCK_SIZE);
 	packet[0] = FLAG;
 
 	if(appLayer.transmission == TRANSMITTER){
@@ -184,7 +177,7 @@ char *createControlPacket(int type){
 
 char *createSUFrame(ControlType type){
 
-	char frame[6];
+    char *frame = malloc(sizeof(char) * CONTROL_PCK_SIZE);
 	frame[0] = FLAG;
 	frame[4] = FLAG;
 	frame[5] = '\0';
@@ -194,7 +187,7 @@ char *createSUFrame(ControlType type){
 			frame[1] = ADDRESS_SEND;
 			break;
 		case RECEIVER:
-			frame[1] = ADDRESS_RECV; 
+			frame[1] = ADDRESS_RECV;
 			break;
 	}
 
@@ -214,42 +207,101 @@ char *createSUFrame(ControlType type){
 		case REJ:
 
 			break;
+        default:
+            break;
 	}
+    frame[3] = (frame[1]^frame[2]);
 	return frame;
+}
+
+int llwrite(int fd, char* msg, int length){
+    int res = write(fd, msg, length);
+    return res;
+}
+
+int llread(){
+    return 0;
 }
 
 int llopen(int gate, ConnectionMode connection){
 
-    printf("New termios structure set\n");
-	
-	char msg = createSUFrame(SET);
-	sendMessage(SET,msg);
-	return fd;	
+    char answer[5];
+	char *msg = createSUFrame(SET);
+    while (again == TRUE && timeouts < lLayer.numTransmissions) {
+        sendMessage(msg);
+        alarm(lLayer.timeout);
+        readMessage(answer);
+
+    }
+
+    free(msg);
+    if(analyse(answer) != UA){
+        return -1;
+    } else
+    return gate;
 }
 
-
+/*  Envia DISC e espera por UA ou por DISC dependendo se emite ou recebe*/
 int llclose(int fd){
-	char msg = createSUFrame(DISC);
-
-	sendMessage(DISC, msg);
-
+    char answer[5];
+	char *msg = createSUFrame(DISC);
+    while(STOP == FALSE){
+        STOP = FALSE;
+	    sendMessage(msg);
+        alarm(3);
+        readMessage(answer);
+    }
+    free(msg);
+    if(appLayer.transmission == TRANSMITTER){
+        if(analyse(answer) == DISC){
+            msg = createSUFrame(UA);
+            sendMessage(msg);
+            free(msg);
+            close(fd);
+        }
+    } else if(appLayer.transmission == RECEIVER){
+        if(analyse(answer) == UA){
+            close(fd);
+        }
+    }
+    alarm(0);
+    return 0;
 }
 
+/*  Envio de informacao do lado do emissor*/
+int transfer(){
 
-int main(int argc, char** argv)
-{
-    int fd, res;
+    char *msg;
+    int fd = open("pinguim.gif", O_RDONLY);
+    if(fd < 0){
+
+    }
+
+
+    msg = createSUFrame(START);
+    createDataPacket(fd);
+
+
+    return 0;
+}
+
+int receive(){
+    return 0;
+}
+
+int main(int argc, char** argv) {
+
+    int fd;
     int sum = 0, speed = 0;
 
-    
-    if ( (argc < 3) || 
-  	     ((strcmp("/dev/ttyS0", argv[1])!=0) && 
+
+    if ( (argc < 3) ||
+  	     ((strcmp("/dev/ttyS0", argv[1])!=0) &&
   	      (strcmp("/dev/ttyS1", argv[1])!=0) )) {
       printf("Usage:\tnserial SerialPort ConnectionMode Ba\n\tex: nserial /dev/ttyS1 TRANSMITTER||RECEIVER\n");
       exit(1);
     }
 
-    ConnectionMode connection;
     int gate;
     if(strcmp("/dev/ttyS0", argv[1])==0){
     	gate = 0;
@@ -280,9 +332,9 @@ int main(int argc, char** argv)
         exit(1);
     }
 
-    int fd = open(port, O_RDWR | O_NOCTTY );
+    fd = open(argv[1], O_RDWR | O_NOCTTY );
 
-    if (fd <0) {perror(port); exit(-1); }
+    if (fd <0) {perror(argv[1]); exit(-1); }
 
     /*
     Open serial port device for reading and writing and not as controlling tty
@@ -305,8 +357,8 @@ int main(int argc, char** argv)
     newtio.c_cc[VMIN]     = 0;   /* blocking read until 5 chars received */
 
 
-  	/* 
-    VTIME e VMIN devem ser alterados de forma a proteger com um temporizador a 
+  	/*
+    VTIME e VMIN devem ser alterados de forma a proteger com um temporizador a
     leitura do(s) próximo(s) caracter(es)
   	*/
 
@@ -320,10 +372,11 @@ int main(int argc, char** argv)
     }
 
 
-    appLayer.fd = llopen(gate, connection);
+    appLayer.fd = llopen(gate, appLayer.transmission);
 
 
-	
+
+
 /*
 	int gif = open("pinguim.gif", O_RDONLY);
 	createStartFrame(gif,"pinguim.gif" );
