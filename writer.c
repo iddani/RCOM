@@ -3,13 +3,19 @@
 #include "utilities.h"
 
 volatile int STOP=FALSE;
-unsigned int frameSize;
-unsigned int timeouts = 0;
+volatile int waitFlag = TRUE;
 volatile int again = TRUE;
+unsigned int frameSize;
+volatile int timeouts = 0;
 unsigned int ns = 0x00;
 struct termios oldtio,newtio;
 struct applicationLayer appLayer;
 struct linkLayer lLayer;
+
+
+void signalHandlerIO( int status){
+	waitFlag = FALSE;
+}
 
 void alarm_handler(int signo)
 {
@@ -227,27 +233,63 @@ int llread(){
 
 int llopen(int gate, ConnectionMode connection){
 
-    char answer[5];
-	char msg[5];
-	createSUFrame(SET, msg);
-	STOP = FALSE;
-	int res = 0;
-    while (STOP == FALSE && timeouts < 3) {
-        sendMessage(msg);
-        alarm(3);
-        res = readMessage(answer);
-		printf("res: %x\n",answer[0]);
-		printf("res: %x\n",answer[1]);
-		printf("res: %x\n",answer[2]);
-		printf("res: %x\n",answer[3]);
-		printf("res: %x\n",answer[4]);
-		
-		if(analyse(answer) == CTRL_UA){
-			printf("Recognized UA\n");
-			STOP = TRUE;
-		}
-    }
+	if(connection == TRANSMITTER){
 
+	    char answer[5];
+		char msg[5];
+		createSUFrame(SET, msg);
+		STOP = FALSE;
+		int res = 0;
+	    while (STOP == FALSE && timeouts < 3) {
+	        sendMessage(msg);
+	        alarm(3);
+	        res = readMessage(answer);
+			
+			if(analyse(answer) == CTRL_UA){
+				printf("Recognized UA\n");
+				STOP = TRUE;
+			}
+	    }
+	}
+	else {
+		printf("New termios structure set\n");
+
+		char msg[20];
+		int msgLength = 0, status = 0;
+		char buf;
+		int res;
+
+		while (STOP==FALSE) {       // loop for input 
+			write(1, ".", 1); usleep(100000);
+
+			if(waitFlag == FALSE){
+				if((res = read(appLayer.fd,&buf,1)) > 0){   // returns after 0 chars have been input 
+
+					status = readByte(buf, status);
+					msg[msgLength] = buf;
+					msgLength++;
+
+					if(status == 3){
+						if(analyse(msg) == CTRL_SET){
+							char ans[6];
+							createSUFrame(UA, ans);
+							sendMessage(ans);
+							STOP = TRUE;
+
+							printf("Setup aknowlegded. Sending UA\n");
+						} else {
+							msgLength = 0;
+						}
+					}
+
+				}
+				else if (res < 0){
+					printf("Errno %d\n", errno);
+				}
+			}
+	    }
+
+	}
     //free(msg);
     //if(analyse(answer) != UA){
     //    return -1;
@@ -336,16 +378,30 @@ int main(int argc, char** argv) {
       		exit(1);
 	}
 
-    struct sigaction action;
-    action.sa_handler = alarm_handler;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = 0;
+    struct sigaction actionAlarm;
+    actionAlarm.sa_handler = alarm_handler;
+    sigemptyset(&actionAlarm.sa_mask);
+    actionAlarm.sa_flags = 0;
 
-    if (sigaction(SIGALRM,&action, NULL) < 0)
+    if (sigaction(SIGALRM,&actionAlarm, NULL) < 0)
     {
         fprintf(stderr,"Unable to install SIGALRM handler\n");
         exit(1);
     }
+
+
+	struct sigaction actionIO;
+    actionIO.sa_handler = signalHandlerIO;
+    if (sigaction(SIGIO,&actionIO, NULL) < 0)
+    {
+        fprintf(stderr,"Unable to install SIGIO handler\n");
+        exit(3);
+	}
+
+    fcntl(appLayer.fd, F_SETOWN, getpid());
+    fcntl(appLayer.fd, F_SETFL, FASYNC);
+
+
 
     appLayer.fd = open(argv[1], O_RDWR | O_NOCTTY );
 

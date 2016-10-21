@@ -16,7 +16,7 @@
 #define TRUE 1
 #define FLAG 0x7E
 #define ADDRESS	0x03
-#define CONTROL 0x03
+#define CONTROL 0x07
 #define BCC 0x06
 
 
@@ -49,17 +49,32 @@ int readByte(char byte, int status){
 			break;
 	}
 
+	return 0;
+
 }
 
 int isSetup(char *msg){
 	if(msg[3] != (msg[2]^msg[1])){
 		return -1;	//back to start
 	} else{
-		if(msg[2] == CONTROL){
+		if(msg[2] == 0x03){ //para setup
 			return TRUE;
 		} else{
 			return 0;	//proceed for different control
 		}
+	}
+}
+
+char analyse(char msg[]){
+
+	char address = msg[1], control = msg[2], bcc = msg[3];
+	printf("%x\n", address);
+	printf("%x\n", control);
+	printf("%x\n", bcc);
+	if(bcc != (address^control)){
+		return -1;
+	} else {
+		return control;
 	}
 }
 
@@ -72,7 +87,39 @@ int sendUA(int fd){
 	responseUA[4] = FLAG;
 
 	write(fd,responseUA,5);
+	return 0;
 }
+
+/*  Envia DISC e espera por UA ou por DISC dependendo se emite ou recebe*/
+int llclose(int fd){
+    char answer[5];
+	char msg[5];// = createSUFrame(DISC);
+	
+    while(STOP == FALSE){
+        	STOP = FALSE;
+        	readMessage(answer);
+    	
+        	if(analyse(answer) == CTRL_DISC){
+            	createSUFrame(CTRL_DISC, msg);
+            	while(STOP == FALSE){
+	    			sendMessage(msg);
+        			//alarm(3);
+        			readMessage(answer);
+    	
+        			if(analyse(answer) == CTRL_UA){
+            			close(fd);
+						STOP = TRUE;
+       				}
+				}
+       		}
+		}
+    //free(msg);
+   
+   
+    
+    return 0;
+}
+
 
 int main(int argc, char** argv)
 {
@@ -155,9 +202,11 @@ int main(int argc, char** argv)
 
 		if(waitFlag == FALSE){
 			if((res = read(fd,&buf,1)) > 0){   // returns after 0 chars have been input 
+
 				status = readByte(buf, status);
 				msg[msgLength] = buf;
 				msgLength++;
+
 				if(status == 3){
 					if(isSetup(msg) == TRUE){
 						sendUA(fd);
@@ -175,6 +224,8 @@ int main(int argc, char** argv)
 			}
 		}
     }
+
+    llclose();
 
   /* 
     O ciclo WHILE deve ser alterado de modo a respeitar o indicado no guião 
