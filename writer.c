@@ -102,9 +102,6 @@ char * byteDestuffing(char * data, int size){
 char analyse(char msg[]){
 
 	char address = msg[1], control = msg[2], bcc = msg[3];
-	printf("%x\n", address);
-	printf("%x\n", control);
-	printf("%x\n", bcc);
 	if(bcc != (address^control)){
 		return -1;
 	} else {
@@ -112,78 +109,7 @@ char analyse(char msg[]){
 	}
 }
 
-int sendMessage(char *msg){
-
-	int res = 0;
-
-	//while((STOP == FALSE) && (timeouts < 3)){
-		//again = TRUE;
-		res = write(appLayer.fd, msg, 6);
-		printf("Wrote %d bytes to fd\n", res);
-	//}
-    return -1;
-}
-
-int readMessage(char *answer){
-    char buf;
-	int ansLength = 0, status = 0;
-    int res;
-    again = TRUE;
-
-    while(again == TRUE){
-        if((res = read(appLayer.fd, &buf, 1)) > 0){
-            status = readByte(buf, status);
-            answer[ansLength] = buf;
-            ansLength++;
-
-            if(status == 3){
-                if(answer[3]==(answer[1]^answer[2])){
-                    return 0;
-                }
-                else ansLength = 0;
-            }
-        }
-    }
-    return -1;
-}
-
-char *createDataPacket(int fd){
-    char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
-    byteStuffing(fd, data);
-    return data;
-}
-
-char *createControlPacket(int type){
-		//fileInfo
-	struct stat s;
-	if (fstat(appLayer.fd, &s) == -1) {
-  		printf("fstat(%d) returned error=%d.", appLayer.fd, errno);
-	}
-
-	char *packet = malloc(sizeof(char) * CONTROL_PCK_SIZE);
-	packet[0] = FLAG;
-
-	if(appLayer.transmission == TRANSMITTER){
-		packet[1] = ADDRESS_SEND;
-	} else{		/*Receiver*/
-		packet[1] = ADDRESS_RECV;
-	}
-	ns = (ns^COUNTER_MODULE);
-	packet[2] = ns;
-	packet[3] = (packet[1]^packet[2]);	//BCC
-	//Data
-	packet[4] = type;		//start
-	packet[5] = 0x00;		//type
-	//packet[6] = 0x02;		//number of bytes
-	//packet[7] = s.st_size;
-	packet[9] = 0x01;		//name
-	//packet[10] = 0x01;		//number of bytes
-	//packet[11] = name;		//value
-
-	return packet;
-}
-
-char *createSUFrame(ControlType type, char *frame){
+int createSUFrame(ControlType type, char *frame){
 
     //char *frame = malloc(sizeof(char) * 6);
 	frame[0] = FLAG;
@@ -219,7 +145,84 @@ char *createSUFrame(ControlType type, char *frame){
             break;
 	}
     frame[3] = (frame[1]^frame[2]);
-	return frame;
+	return 0;
+}
+
+int sendSUFrame(ControlType type){
+
+	int res = 0;
+	char frame[SU_FRAME_SIZE];
+	createSUFrame(type, frame);
+	res = write(appLayer.fd, frame, SU_FRAME_SIZE);
+	printf("Wrote SU frame with %d bytes to fd\n", res);
+    return 0;
+}
+
+int readMessage(char *answer){
+    char buf;
+	int ansLength = 0, status = 0;
+    int res;
+    again = TRUE;
+
+    while(again == TRUE){
+    	write(1, ".", 1); usleep(100000);
+
+		if(waitFlag == FALSE){
+	        if((res = read(appLayer.fd, &buf, 1)) > 0){
+	            status = readByte(buf, status);
+	            answer[ansLength] = buf;
+	            ansLength++;
+
+	            if(status == 3){
+	                if(answer[3]==(answer[1]^answer[2])){
+	                	again = FALSE;
+	                    return 0;
+	                }
+	                else ansLength = 0;
+	            }
+	        }
+	        waitFlag = TRUE;
+	    }
+        //printf("%d\n", errno);
+    }
+    return -1;
+}
+
+char *createDataPacket(int fd){
+    char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
+    byteStuffing(fd, data);
+    return data;
+}
+
+char *createControlPacket(int type){
+
+	//fileInfo
+	struct stat s;
+	if (fstat(appLayer.fd, &s) == -1) {
+  		printf("fstat(%d) returned error=%d.", appLayer.fd, errno);
+	}
+
+	char *packet = malloc(sizeof(char) * CONTROL_PCK_SIZE);
+	packet[0] = FLAG;
+
+	if(appLayer.transmission == TRANSMITTER){
+		packet[1] = ADDRESS_SEND;
+	} else{		/*Receiver*/
+		packet[1] = ADDRESS_RECV;
+	}
+	ns = (ns^COUNTER_MODULE);
+	packet[2] = ns;
+	packet[3] = (packet[1]^packet[2]);	//BCC
+	//Data
+	packet[4] = type;		//start
+	packet[5] = 0x00;		//type
+	//packet[6] = 0x02;		//number of bytes
+	//packet[7] = s.st_size;
+	packet[9] = 0x01;		//name
+	//packet[10] = 0x01;		//number of bytes
+	//packet[11] = name;		//value
+
+	return packet;
 }
 
 int llwrite(int fd, char* msg, int length){
@@ -228,6 +231,7 @@ int llwrite(int fd, char* msg, int length){
 }
 
 int llread(){
+
     return 0;
 }
 
@@ -235,13 +239,11 @@ int llopen(int gate, ConnectionMode connection){
 
 	if(connection == TRANSMITTER){
 
-	    char answer[5];
-		char msg[5];
-		createSUFrame(SET, msg);
 		STOP = FALSE;
 		int res = 0;
+		char answer[20];
 	    while (STOP == FALSE && timeouts < 3) {
-	        sendMessage(msg);
+	        sendSUFrame(SET);
 	        alarm(3);
 	        res = readMessage(answer);
 			
@@ -252,68 +254,34 @@ int llopen(int gate, ConnectionMode connection){
 	    }
 	}
 	else {
-		printf("New termios structure set\n");
 
 		char msg[20];
-		int msgLength = 0, status = 0;
-		char buf;
 		int res;
 
-		while (STOP==FALSE) {       // loop for input 
-			write(1, ".", 1); usleep(100000);
+		readMessage(msg);
+		if(analyse(msg) == CTRL_SET){
+			sendSUFrame(UA);
+			STOP = TRUE;
 
-			if(waitFlag == FALSE){
-				if((res = read(appLayer.fd,&buf,1)) > 0){   // returns after 0 chars have been input 
-
-					status = readByte(buf, status);
-					msg[msgLength] = buf;
-					msgLength++;
-
-					if(status == 3){
-						if(analyse(msg) == CTRL_SET){
-							char ans[6];
-							createSUFrame(UA, ans);
-							sendMessage(ans);
-							STOP = TRUE;
-
-							printf("Setup aknowlegded. Sending UA\n");
-						} else {
-							msgLength = 0;
-						}
-					}
-
-				}
-				else if (res < 0){
-					printf("Errno %d\n", errno);
-				}
-			}
-	    }
-
+			printf("Setup aknowlegded. Sending UA\n");
+		}
 	}
-    //free(msg);
-    //if(analyse(answer) != UA){
-    //    return -1;
-    //} else
     return gate;
 }
 
 /*  Envia DISC e espera por UA ou por DISC dependendo se emite ou recebe*/
 int llclose(int fd){
     char answer[5];
-	char msg[5];// = createSUFrame(DISC);
-	createSUFrame(DISC, msg);
     while(STOP == FALSE){
         STOP = FALSE;
-	    sendMessage(msg);
+	    sendSUFrame(DISC);
         alarm(3);
         readMessage(answer);
     }
     //free(msg);
     if(appLayer.transmission == TRANSMITTER){
         if(analyse(answer) == DISC){
-            //msg = createSUFrame(UA);
-            sendMessage(msg);
-            //free(msg);
+            sendSUFrame(UA);
             close(fd);
         }
     } else if(appLayer.transmission == RECEIVER){
@@ -343,6 +311,7 @@ int transfer(){
 }
 
 int receive(){
+
     return 0;
 }
 
@@ -442,22 +411,22 @@ int main(int argc, char** argv) {
 
     }
 
-
+    printf("New termios structure set\n");
     llopen(gate, appLayer.transmission);
 
 
 
 
-/*
+	/*
 	int gif = open("pinguim.gif", O_RDONLY);
 	createStartFrame(gif,"pinguim.gif" );
 
 	char pic;
 	char data[255];
 	int it = 0;
-*/
+	*/
 
-/*
+	/*
 	while(it < 255){
 		read( gif, pic, 1);
 		if(pic == FLAG){
@@ -476,7 +445,7 @@ int main(int argc, char** argv) {
 			it =0;
 		}
 	}
-*/
+	*/
 
     if ( tcsetattr(appLayer.fd,TCSANOW,&oldtio) == -1) {
 		
