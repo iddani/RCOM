@@ -17,11 +17,16 @@ void signalHandlerIO( int status){
 	waitFlag = FALSE;
 }
 
-void alarm_handler(int signo)
+void alarmHandler(int signo)
 {
     timeouts++;
     printf("timeouts: %d\n", timeouts);
     again = FALSE;
+}
+
+void resetTimer(){
+	timeouts = 0;
+	alarm(0);
 }
 
 int readByte(char byte, int status){
@@ -94,9 +99,7 @@ char * byteDestuffing(char * data, int size){
 		destuffed[i] = data[i];
 
 	}
-
 	return destuffed;
-
 }
 
 char analyse(char msg[]){
@@ -111,10 +114,8 @@ char analyse(char msg[]){
 
 int createSUFrame(ControlType type, char *frame){
 
-    //char *frame = malloc(sizeof(char) * 6);
 	frame[0] = FLAG;
 	frame[4] = FLAG;
-	frame[5] = '\0';
 
 	switch(appLayer.transmission){
 		case TRANSMITTER:
@@ -165,8 +166,8 @@ int readMessage(char *answer){
     again = TRUE;
 
     while(again == TRUE){
-    	write(1, ".", 1); usleep(100000);
 
+    	write(1, ".", 1); usleep(100000);
 		if(waitFlag == FALSE){
 	        if((res = read(appLayer.fd, &buf, 1)) > 0){
 	            status = readByte(buf, status);
@@ -175,15 +176,12 @@ int readMessage(char *answer){
 
 	            if(status == 3){
 	                if(answer[3]==(answer[1]^answer[2])){
-	                	again = FALSE;
+	                	//again = FALSE;
 	                    return 0;
 	                }
-	                else ansLength = 0;
 	            }
-	        }
-	        waitFlag = TRUE;
-	    }
-        //printf("%d\n", errno);
+	        } else waitFlag = TRUE;
+	   	}
     }
     return -1;
 }
@@ -250,6 +248,7 @@ int llopen(int gate, ConnectionMode connection){
 			if(analyse(answer) == CTRL_UA){
 				printf("Recognized UA\n");
 				STOP = TRUE;
+				alarm(0);
 			}
 	    }
 	}
@@ -271,25 +270,37 @@ int llopen(int gate, ConnectionMode connection){
 
 /*  Envia DISC e espera por UA ou por DISC dependendo se emite ou recebe*/
 int llclose(int fd){
-    char answer[5];
-    while(STOP == FALSE){
-        STOP = FALSE;
-	    sendSUFrame(DISC);
-        alarm(3);
-        readMessage(answer);
-    }
-    //free(msg);
+
     if(appLayer.transmission == TRANSMITTER){
-        if(analyse(answer) == DISC){
-            sendSUFrame(UA);
-            close(fd);
-        }
+    	char answer[5];
+	    while(STOP == FALSE){
+	        
+		    sendSUFrame(DISC);
+	        alarm(3);
+	        readMessage(answer);
+	    
+	        if(analyse(answer) == DISC){
+	            sendSUFrame(UA);
+	            close(fd);
+	            STOP = TRUE;
+	        }
+   		}
     } else if(appLayer.transmission == RECEIVER){
-        if(analyse(answer) == UA){
-            close(fd);
+    	readMessage(answer);
+        if(analyse(answer) == DISC){
+            while(STOP == FALSE){
+			    sendSUFrame(DISC);
+		        alarm(3);
+		        readMessage(answer);
+		    
+		        if(analyse(answer) == UA){
+		            close(fd);
+		            STOP = TRUE;
+		        }
+   			}
         }
     }
-    alarm(0);
+    resetTimer();
     return 0;
 }
 
@@ -347,31 +358,6 @@ int main(int argc, char** argv) {
       		exit(1);
 	}
 
-    struct sigaction actionAlarm;
-    actionAlarm.sa_handler = alarm_handler;
-    sigemptyset(&actionAlarm.sa_mask);
-    actionAlarm.sa_flags = 0;
-
-    if (sigaction(SIGALRM,&actionAlarm, NULL) < 0)
-    {
-        fprintf(stderr,"Unable to install SIGALRM handler\n");
-        exit(1);
-    }
-
-
-	struct sigaction actionIO;
-    actionIO.sa_handler = signalHandlerIO;
-    if (sigaction(SIGIO,&actionIO, NULL) < 0)
-    {
-        fprintf(stderr,"Unable to install SIGIO handler\n");
-        exit(3);
-	}
-
-    fcntl(appLayer.fd, F_SETOWN, getpid());
-    fcntl(appLayer.fd, F_SETFL, FASYNC);
-
-
-
     appLayer.fd = open(argv[1], O_RDWR | O_NOCTTY );
 
     if (appLayer.fd <0) {perror(argv[1]); exit(-1); }
@@ -396,11 +382,30 @@ int main(int argc, char** argv) {
     newtio.c_cc[VTIME]    = 1;   /* inter-character timer unused */
     newtio.c_cc[VMIN]     = 0;   /* blocking read until 5 chars received */
 
+    struct sigaction actionAlarm;
+    actionAlarm.sa_handler = alarmHandler;
+    sigemptyset(&actionAlarm.sa_mask);
+    actionAlarm.sa_flags = 0;
 
-  	/*
-    VTIME e VMIN devem ser alterados de forma a proteger com um temporizador a
-    leitura do(s) próximo(s) caracter(es)
-  	*/
+    if (sigaction(SIGALRM,&actionAlarm, NULL) < 0)
+    {
+        fprintf(stderr,"Unable to install SIGALRM handler\n");
+        exit(1);
+    }
+
+
+	struct sigaction actionIO;
+    actionIO.sa_handler = signalHandlerIO;
+    if (sigaction(SIGIO,&actionIO, NULL) < 0)
+    {
+        fprintf(stderr,"Unable to install SIGIO handler\n");
+        exit(3);
+	}
+
+    fcntl(appLayer.fd, F_SETOWN, getpid());
+    fcntl(appLayer.fd, F_SETFL, FASYNC);
+
+
 
 
     tcflush(appLayer.fd, TCIOFLUSH);
