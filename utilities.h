@@ -23,9 +23,11 @@
 #define ADDRESS_RECV 		0x01
 //#define BCC
 
-#define	CTRL_SET			0x03
-#define	CTRL_DISC			0x0B
-#define	CTRL_UA				0x07
+#define	SET				0x03
+#define	DISC			0x0B
+#define	UA				0x07
+#define RR				0x05
+#define	REJ				0x01
 
 #define I_CTRL_DATA			0x01
 #define I_CTRL_START		0x02
@@ -44,11 +46,6 @@
 typedef enum{
 	TRANSMITTER, RECEIVER
 }ConnectionMode;
-
-
-typedef enum {
-	SET, DISC, UA, RR, REJ
-}ControlType;
 
 struct applicationLayer {
 	int fd;			/*Descritor correspondente à porta série*/
