@@ -5,9 +5,11 @@
 volatile int STOP=FALSE;
 volatile int waitFlag = TRUE;
 volatile int again = TRUE;
-unsigned int frameSize;
+unsigned int packetSize = 100;
+unsigned int frameSize = packetSize + 8; //por isto depois de ler do user ou assim
 volatile int timeouts = 0;
 unsigned int ns = 0x00;
+unsigned int numTrama = 0;
 struct termios oldtio,newtio;
 struct applicationLayer appLayer;
 struct linkLayer lLayer;
@@ -87,15 +89,15 @@ int byteStuffing(int fd, char *data){
 		}
 		it++;
 
-	} while(it < 200);	//maxFrames
+	} while(it < 200);	//numBytes
     return 0;
 }
 
-char * byteDestuffing(char * data, int size){
+char * byteDestuffing(char * data){
 
 	char * destuffed = malloc(sizeof(char) * frameSize);
 	int i = 0;
-	for (; i < size; ++i){
+	for (; i < frameSize; ++i){
 
 		if(data[i] == 0x7D && data[i+1] == 0x5E){
 			destuffed[i] = 0x7E;
@@ -195,8 +197,30 @@ int readMessage(char *answer){
     return -1;
 }
 
+char makeBCC2(char * packet){
 
-char *createDataPacket(int fd){
+	char lixo;
+	return lixo;
+
+}
+
+char * createIframe(char *packet, int numPacketBytes){
+
+	char * frame = malloc(sizeof(char) * frameSize);
+
+	frame[0] = FLAG;
+	frame[1] = ADDRESS_SEND;
+	frame[2] = numTrama;
+	frame[3] = frame[1]^frame[2];
+
+	memcpy(&frame[4], packet, numPacketBytes);
+
+	frame[5] = makeBCC2(packet);
+	frame[6] = FLAG;
+
+}
+
+char *createDataPacket(int fd){ // bytestufs maxFrames from file
     char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
     byteStuffing(fd, data);
     return data;
@@ -220,9 +244,9 @@ char *codeFileSize(int fileSize, int *num){
 	} while(remainder > 0);
 
 	char *size = malloc(sizeof(char) * (*num));
+
 	int i;
-	for (i = 0; i < (*num); ++i)
-	{
+	for (i = 0; i < (*num); ++i) {
 		size[i] = reverse[(*num)-1-i];
 	}
 
@@ -247,6 +271,10 @@ char *createControlPacket(int type, int fd, int *pacLength){
 	if((*pacLength) < ((*pacLength) + nBytes-1)){
 		(*pacLength) += nBytes - 1;
 		packet = realloc(packet, (*pacLength));
+<<<<<<< HEAD
+=======
+
+>>>>>>> bbda746ac5c0b2f5c9e2541a763328d92121ee13
 	}
 
 	packet[2] = nBytes;		//number of bytes
@@ -290,8 +318,22 @@ char *createIFrameControl(int type, int fd){
 }
 
 int llwrite(int fd, char* msg, int length){
-    int res = write(fd, msg, length);
-    return res;
+
+	STOP = FALSE;
+
+	while(STOP == FALSE){
+    int res = byteStuffing(fd, data); //maxbytes de cada vez
+
+		if(res > 0){
+
+				createDataPacket
+
+		}
+
+	}
+
+
+  return res;
 }
 
 int llread(){
@@ -299,7 +341,7 @@ int llread(){
 	while (STOP == FALSE) {
 		int size;
 		char *msg = readIFrame(&size);
-		
+
 		if(TRUE){	//sem erros detectados no cabeçalho e no campo de dados
 			char *destuffed = byteDestuffing(msg, size);
 			sendSUFrame(RR);
@@ -360,6 +402,7 @@ int llclose(int fd){
 	        }
    		}
     } else if(appLayer.transmission == RECEIVER){
+
     	readMessage(answer);
         if(analyse(answer) == DISC){
             while(STOP == FALSE){
@@ -468,6 +511,7 @@ int main(int argc, char** argv) {
 
 	struct sigaction actionIO;
     actionIO.sa_handler = signalHandlerIO;
+    actionIO.sa_flags = 0;
     if (sigaction(SIGIO,&actionIO, NULL) < 0)
     {
         fprintf(stderr,"Unable to install SIGIO handler\n");
@@ -490,7 +534,7 @@ int main(int argc, char** argv) {
 
     printf("New termios structure set\n");
     llopen(gate, appLayer.transmission);
-    printf("Opened correctly starting close\n");
+    printf("Opened correctly. Starting close\n");
 	int gif = open("pinguim.gif", O_RDONLY);
     char * packet = createIFrameControl(START, gif);
     free(packet);
