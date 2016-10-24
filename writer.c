@@ -5,9 +5,11 @@
 volatile int STOP=FALSE;
 volatile int waitFlag = TRUE;
 volatile int again = TRUE;
-unsigned int frameSize;
+unsigned int packetSize = 100;
+unsigned int frameSize = packetSize + 8; //por isto depois de ler do user ou assim
 volatile int timeouts = 0;
 unsigned int ns = 0x00;
+unsigned int numTrama = 0;
 struct termios oldtio,newtio;
 struct applicationLayer appLayer;
 struct linkLayer lLayer;
@@ -78,15 +80,15 @@ int byteStuffing(int fd, char *data){
 		}
 		it++;
 
-	} while(it < 200);	//maxFrames
+	} while(it < 200);	//numBytes
     return 0;
 }
 
-char * byteDestuffing(char * data, int size){
+char * byteDestuffing(char * data){
 
 	char * destuffed = malloc(sizeof(char) * frameSize);
 	int i = 0;
-	for (; i < size; ++i){
+	for (; i < frameSize; ++i){
 
 		if(data[i] == 0x7D && data[i+1] == 0x5E){
 			destuffed[i] = 0x7E;
@@ -186,8 +188,30 @@ int readMessage(char *answer){
     return -1;
 }
 
+char makeBCC2(char * packet){
 
-char *createDataPacket(int fd){
+	char lixo;
+	return lixo;
+
+}
+
+char * createIframe(char *packet, int numPacketBytes){
+
+	char * frame = malloc(sizeof(char) * frameSize);
+
+	frame[0] = FLAG;
+	frame[1] = ADDRESS_SEND;
+	frame[2] = numTrama;
+	frame[3] = frame[1]^frame[2];
+
+	memcpy(&frame[4], packet, numPacketBytes);
+
+	frame[5] = makeBCC2(packet);
+	frame[6] = FLAG;
+
+}
+
+char *createDataPacket(int fd){ // bytestufs maxFrames from file
     char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
     byteStuffing(fd, data);
     return data;
@@ -197,7 +221,7 @@ char *codeFileSize(int fileSize, int *num){
 	int nBytes = 4, remainder, iterator = 0;
 	char reverse[nBytes];
 
-	
+
 	do {
 		remainder = fileSize % 0x100;
 		fileSize /= 0x100;
@@ -211,7 +235,8 @@ char *codeFileSize(int fileSize, int *num){
 	} while(remainder > 0);
 
 	char *size = malloc(sizeof(char) * (*num));
-	for (int i = 0; i < (*num); ++i)
+	int i = 0;
+	for (; i < (*num); ++i)
 	{
 		size[i] = reverse[(*num)-1-i];
 	}
@@ -220,7 +245,7 @@ char *codeFileSize(int fileSize, int *num){
 }
 
 char *createControlPacket(int type, int fd, int *pacLength){
-	
+
 	struct stat s;
 	if (fstat(fd, &s) == -1) {
   		printf("fstat(%d) returned error=%d.", fd, errno);
@@ -231,24 +256,24 @@ char *createControlPacket(int type, int fd, int *pacLength){
 	packet[0] = type;		//start
 	packet[1] = 0x00;		//type -> size
 
-	
+
 	int nBytes = 0;
 	char *codedSize = codeFileSize(size, &nBytes);
 	if((*pacLength) < ((*pacLength) + nBytes-1)){
 		(*pacLength) += nBytes - 1;
 		packet = realloc(packet, (*pacLength));
-		
+
 	}
 
 	packet[2] = nBytes;		//number of bytes
 	memcpy(&(packet[3]), codedSize, nBytes);
 	packet[3 + nBytes] = 0x01;		//type -> name
-	
+
 	int nameLength = strlen("pinguim.gif");
 	if((*pacLength) < ((*pacLength) + nameLength - 1)){
 		(*pacLength) += nameLength - 1;
 		packet = realloc(packet, (*pacLength));
-		
+
 	}
 	packet[4 + nBytes] = nameLength;		//number of bytes
 	memcpy(&(packet[5 + nBytes]), "pinguim.gif", nameLength);
@@ -279,8 +304,22 @@ char *createIFrameControl(int type, int fd){
 }
 
 int llwrite(int fd, char* msg, int length){
-    int res = write(fd, msg, length);
-    return res;
+
+	STOP = FALSE;
+
+	while(STOP == FALSE){
+    int res = byteStuffing(fd, data); //maxbytes de cada vez
+
+		if(res > 0){
+
+				createDataPacket
+
+		}
+
+	}
+
+
+  return res;
 }
 
 int llread(){
@@ -299,7 +338,7 @@ int llopen(int gate, ConnectionMode connection){
 	        sendSUFrame(SET);
 	        alarm(3);
 	        res = readMessage(answer);
-			
+
 			if(analyse(answer) == UA){
 				printf("Recognized UA\n");
 				STOP = TRUE;
@@ -326,9 +365,9 @@ int llclose(int fd){
 	char answer[5];
 	STOP = FALSE;
     if(appLayer.transmission == TRANSMITTER){
-    	
+
 	    while(STOP == FALSE && timeouts < 3){
-	        
+
 		    sendSUFrame(DISC);
 	        alarm(3);
 	        readMessage(answer);
@@ -339,13 +378,14 @@ int llclose(int fd){
 	        }
    		}
     } else if(appLayer.transmission == RECEIVER){
+
     	readMessage(answer);
         if(analyse(answer) == DISC){
             while(STOP == FALSE){
 			    sendSUFrame(DISC);
 		        alarm(3);
 		        readMessage(answer);
-		    
+
 		        if(analyse(answer) == UA){
 		            STOP = TRUE;
 		        }
@@ -447,6 +487,7 @@ int main(int argc, char** argv) {
 
 	struct sigaction actionIO;
     actionIO.sa_handler = signalHandlerIO;
+    actionIO.sa_flags = 0;
     if (sigaction(SIGIO,&actionIO, NULL) < 0)
     {
         fprintf(stderr,"Unable to install SIGIO handler\n");
@@ -469,7 +510,7 @@ int main(int argc, char** argv) {
 
     printf("New termios structure set\n");
     llopen(gate, appLayer.transmission);
-    printf("Opened correctly starting close\n");
+    printf("Opened correctly. Starting close\n");
 	int gif = open("pinguim.gif", O_RDONLY);
     char * packet = createIFrameControl(START, gif);
     free(packet);
@@ -507,7 +548,7 @@ int main(int argc, char** argv) {
 	*/
 
     if ( tcsetattr(appLayer.fd,TCSANOW,&oldtio) == -1) {
-		
+
       perror("tcsetattr");
       exit(-1);
     }
