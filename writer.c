@@ -248,7 +248,7 @@ int llopen(int gate, ConnectionMode connection){
 			if(analyse(answer) == CTRL_UA){
 				printf("Recognized UA\n");
 				STOP = TRUE;
-				alarm(0);
+				resetTimer();
 			}
 	    }
 	}
@@ -270,18 +270,20 @@ int llopen(int gate, ConnectionMode connection){
 
 /*  Envia DISC e espera por UA ou por DISC dependendo se emite ou recebe*/
 int llclose(int fd){
-
+	char answer[5];
+	STOP = FALSE;
     if(appLayer.transmission == TRANSMITTER){
-    	char answer[5];
-	    while(STOP == FALSE){
+    	
+	    while(STOP == FALSE && timeouts < 3){
 	        
 		    sendSUFrame(DISC);
 	        alarm(3);
 	        readMessage(answer);
 	    
-	        if(analyse(answer) == DISC){
+	        if(analyse(answer) == CTRL_DISC){
+	        	printf("Received DISC sending UA\n");
 	            sendSUFrame(UA);
-	            close(fd);
+	            //close(fd);
 	            STOP = TRUE;
 	        }
    		}
@@ -293,7 +295,7 @@ int llclose(int fd){
 		        alarm(3);
 		        readMessage(answer);
 		    
-		        if(analyse(answer) == UA){
+		        if(analyse(answer) == CTRL_UA){
 		            close(fd);
 		            STOP = TRUE;
 		        }
@@ -418,7 +420,8 @@ int main(int argc, char** argv) {
 
     printf("New termios structure set\n");
     llopen(gate, appLayer.transmission);
-
+    printf("Opened correctly starting close\n");
+    llclose(appLayer.fd);
 
 
 
