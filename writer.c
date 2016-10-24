@@ -13,12 +13,12 @@ struct applicationLayer appLayer;
 struct linkLayer lLayer;
 
 
-void signalHandlerIO( int status){
+void signalHandlerIO(int status){
+
 	waitFlag = FALSE;
 }
 
-void alarmHandler(int signo)
-{
+void alarmHandler(int signo) {
     timeouts++;
     printf("timeouts: %d\n", timeouts);
     again = FALSE;
@@ -78,7 +78,7 @@ int byteStuffing(int fd, char *data){
 		}
 		it++;
 
-	} while(it < lLayer.maxFrames);
+	} while(it < 200);	//maxFrames
     return 0;
 }
 
@@ -112,7 +112,7 @@ char analyse(char msg[]){
 	}
 }
 
-int createSUFrame(ControlType type, char *frame){
+int createSUFrame(char type, char *frame){
 
 	frame[0] = FLAG;
 	frame[4] = FLAG;
@@ -128,13 +128,13 @@ int createSUFrame(ControlType type, char *frame){
 
 	switch(type){
 		case SET:
-			frame[2] = CTRL_SET;
+			frame[2] = SET;
 			break;
 		case DISC:
-			frame[2] = CTRL_DISC;
+			frame[2] = DISC;
 			break;
 		case UA:
-			frame[2] = CTRL_UA;
+			frame[2] = UA;
 			break;
 		case RR:
 
@@ -149,7 +149,7 @@ int createSUFrame(ControlType type, char *frame){
 	return 0;
 }
 
-int sendSUFrame(ControlType type){
+int sendSUFrame(char type){
 
 	int res = 0;
 	char frame[SU_FRAME_SIZE];
@@ -176,7 +176,7 @@ int readMessage(char *answer){
 
 	            if(status == 3){
 	                if(answer[3]==(answer[1]^answer[2])){
-	                	//again = FALSE;
+	                	again = FALSE;
 	                    return 0;
 	                }
 	            }
@@ -186,39 +186,94 @@ int readMessage(char *answer){
     return -1;
 }
 
+
 char *createDataPacket(int fd){
     char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
     byteStuffing(fd, data);
     return data;
 }
 
-char *createControlPacket(int type){
+char *codeFileSize(int fileSize, int *num){
+	int nBytes = 4, remainder, iterator = 0;
+	char reverse[nBytes];
+
+	
+	do {
+		remainder = fileSize % 0x100;
+		fileSize /= 0x100;
+		printf("remainder %x\n",(unsigned char) remainder);
+		if(remainder > 0){
+			reverse[(*num)] = remainder;
+			printf("%x\n", (unsigned char) reverse[(*num)]);
+			(*num)++;
+		}
+		iterator++;
+	} while(remainder > 0);
+
+	char *size = malloc(sizeof(char) * (*num));
+	for (int i = 0; i < (*num); ++i)
+	{
+		size[i] = reverse[(*num)-1-i];
+	}
+
+	return size;
+}
+
+char *createControlPacket(int type, int fd, int *pacLength){
+	
+	struct stat s;
+	if (fstat(fd, &s) == -1) {
+  		printf("fstat(%d) returned error=%d.", fd, errno);
+	}
+	int size = s.st_size;
+
+	char *packet = malloc(sizeof(char) * (*pacLength));
+	packet[0] = type;		//start
+	packet[1] = 0x00;		//type -> size
+
+	
+	int nBytes = 0;
+	char *codedSize = codeFileSize(size, &nBytes);
+	if((*pacLength) < ((*pacLength) + nBytes-1)){
+		(*pacLength) += nBytes - 1;
+		packet = realloc(packet, (*pacLength));
+		
+	}
+
+	packet[2] = nBytes;		//number of bytes
+	memcpy(&(packet[3]), codedSize, nBytes);
+	packet[3 + nBytes] = 0x01;		//type -> name
+	
+	int nameLength = strlen("pinguim.gif");
+	if((*pacLength) < ((*pacLength) + nameLength - 1)){
+		(*pacLength) += nameLength - 1;
+		packet = realloc(packet, (*pacLength));
+		
+	}
+	packet[4 + nBytes] = nameLength;		//number of bytes
+	memcpy(&(packet[5 + nBytes]), "pinguim.gif", nameLength);
+
+	return packet;
+}
+
+char *createIFrameControl(int type, int fd){
 
 	//fileInfo
-	struct stat s;
-	if (fstat(appLayer.fd, &s) == -1) {
-  		printf("fstat(%d) returned error=%d.", appLayer.fd, errno);
-	}
+	int pacSize = 7;
+	char *controlPacket = createControlPacket(type, fd, &pacSize);
 
-	char *packet = malloc(sizeof(char) * CONTROL_PCK_SIZE);
+	char *packet = malloc(sizeof(char) * 30);
 	packet[0] = FLAG;
 
-	if(appLayer.transmission == TRANSMITTER){
-		packet[1] = ADDRESS_SEND;
-	} else{		/*Receiver*/
-		packet[1] = ADDRESS_RECV;
-	}
+	packet[1] = ADDRESS_SEND;
 	ns = (ns^COUNTER_MODULE);
 	packet[2] = ns;
 	packet[3] = (packet[1]^packet[2]);	//BCC
-	//Data
-	packet[4] = type;		//start
-	packet[5] = 0x00;		//type
-	//packet[6] = 0x02;		//number of bytes
-	//packet[7] = s.st_size;
-	packet[9] = 0x01;		//name
-	//packet[10] = 0x01;		//number of bytes
-	//packet[11] = name;		//value
+
+	memcpy(&packet[4], controlPacket, pacSize);
+	//BCC2
+	//FLAG
+
 
 	return packet;
 }
@@ -245,26 +300,24 @@ int llopen(int gate, ConnectionMode connection){
 	        alarm(3);
 	        res = readMessage(answer);
 			
-			if(analyse(answer) == CTRL_UA){
+			if(analyse(answer) == UA){
 				printf("Recognized UA\n");
 				STOP = TRUE;
-				resetTimer();
 			}
 	    }
 	}
 	else {
-
 		char msg[20];
 		int res;
 
 		readMessage(msg);
-		if(analyse(msg) == CTRL_SET){
+		if(analyse(msg) == SET){
 			sendSUFrame(UA);
 			STOP = TRUE;
-
 			printf("Setup aknowlegded. Sending UA\n");
 		}
 	}
+	resetTimer();
     return gate;
 }
 
@@ -279,11 +332,9 @@ int llclose(int fd){
 		    sendSUFrame(DISC);
 	        alarm(3);
 	        readMessage(answer);
-	    
-	        if(analyse(answer) == CTRL_DISC){
+	        if(analyse(answer) == DISC){
 	        	printf("Received DISC sending UA\n");
 	            sendSUFrame(UA);
-	            //close(fd);
 	            STOP = TRUE;
 	        }
    		}
@@ -295,8 +346,7 @@ int llclose(int fd){
 		        alarm(3);
 		        readMessage(answer);
 		    
-		        if(analyse(answer) == CTRL_UA){
-		            close(fd);
+		        if(analyse(answer) == UA){
 		            STOP = TRUE;
 		        }
    			}
@@ -312,14 +362,13 @@ int transfer(){
     char *msg;
     int fd = open("pinguim.gif", O_RDONLY);
     if(fd < 0){
-
+    	printf("Error opening file. Error: %d\n", fd);
     }
-
 
     //msg = createSUFrame(START);
     createDataPacket(fd);
 
-
+    close(fd);
     return 0;
 }
 
@@ -421,13 +470,15 @@ int main(int argc, char** argv) {
     printf("New termios structure set\n");
     llopen(gate, appLayer.transmission);
     printf("Opened correctly starting close\n");
+	int gif = open("pinguim.gif", O_RDONLY);
+    char * packet = createIFrameControl(START, gif);
+    free(packet);
     llclose(appLayer.fd);
 
 
 
 	/*
 	int gif = open("pinguim.gif", O_RDONLY);
-	createStartFrame(gif,"pinguim.gif" );
 
 	char pic;
 	char data[255];
