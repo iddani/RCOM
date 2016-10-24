@@ -29,6 +29,15 @@ void resetTimer(){
 	alarm(0);
 }
 
+char *getBCC(char *packet, int length){
+		int i;
+		char bcc = malloc(sizeof(char) * length);
+		for (i = 0; i < length; i++) {
+				bcc[i] = (packet[i]^0xFF);
+		}
+		return bcc;
+}
+
 int readByte(char byte, int status){
 	switch(status){
 		case 0:
@@ -197,7 +206,7 @@ char *codeFileSize(int fileSize, int *num){
 	int nBytes = 4, remainder, iterator = 0;
 	char reverse[nBytes];
 
-	
+
 	do {
 		remainder = fileSize % 0x100;
 		fileSize /= 0x100;
@@ -211,7 +220,8 @@ char *codeFileSize(int fileSize, int *num){
 	} while(remainder > 0);
 
 	char *size = malloc(sizeof(char) * (*num));
-	for (int i = 0; i < (*num); ++i)
+	int i;
+	for (i = 0; i < (*num); ++i)
 	{
 		size[i] = reverse[(*num)-1-i];
 	}
@@ -220,7 +230,7 @@ char *codeFileSize(int fileSize, int *num){
 }
 
 char *createControlPacket(int type, int fd, int *pacLength){
-	
+
 	struct stat s;
 	if (fstat(fd, &s) == -1) {
   		printf("fstat(%d) returned error=%d.", fd, errno);
@@ -228,27 +238,26 @@ char *createControlPacket(int type, int fd, int *pacLength){
 	int size = s.st_size;
 
 	char *packet = malloc(sizeof(char) * (*pacLength));
-	packet[0] = type;		//start
+	packet[0] = type;		//control
 	packet[1] = 0x00;		//type -> size
 
-	
+
 	int nBytes = 0;
 	char *codedSize = codeFileSize(size, &nBytes);
 	if((*pacLength) < ((*pacLength) + nBytes-1)){
 		(*pacLength) += nBytes - 1;
 		packet = realloc(packet, (*pacLength));
-		
 	}
 
 	packet[2] = nBytes;		//number of bytes
 	memcpy(&(packet[3]), codedSize, nBytes);
 	packet[3 + nBytes] = 0x01;		//type -> name
-	
+
 	int nameLength = strlen("pinguim.gif");
 	if((*pacLength) < ((*pacLength) + nameLength - 1)){
 		(*pacLength) += nameLength - 1;
 		packet = realloc(packet, (*pacLength));
-		
+
 	}
 	packet[4 + nBytes] = nameLength;		//number of bytes
 	memcpy(&(packet[5 + nBytes]), "pinguim.gif", nameLength);
@@ -271,10 +280,12 @@ char *createIFrameControl(int type, int fd){
 	packet[3] = (packet[1]^packet[2]);	//BCC
 
 	memcpy(&packet[4], controlPacket, pacSize);
-	//BCC2
-	//FLAG
+	char *bcc = getBCC(controlPacket, pacSize);
+	memcpy(&packet[4 + pacSize], bcc, pacSize);
+	packet[4 + 2*pacSize] = FLAG;
 
-
+	free(bcc);
+	free(controlPacket);
 	return packet;
 }
 
@@ -285,6 +296,16 @@ int llwrite(int fd, char* msg, int length){
 
 int llread(){
 
+	while (STOP == FALSE) {
+		int size;
+		char *msg = readIFrame(&size);
+		
+		if(TRUE){	//sem erros detectados no cabeçalho e no campo de dados
+			char *destuffed = byteDestuffing(msg, size);
+			sendSUFrame(RR);
+		}
+	}
+	readMessage()
     return 0;
 }
 
@@ -299,7 +320,7 @@ int llopen(int gate, ConnectionMode connection){
 	        sendSUFrame(SET);
 	        alarm(3);
 	        res = readMessage(answer);
-			
+
 			if(analyse(answer) == UA){
 				printf("Recognized UA\n");
 				STOP = TRUE;
@@ -326,9 +347,9 @@ int llclose(int fd){
 	char answer[5];
 	STOP = FALSE;
     if(appLayer.transmission == TRANSMITTER){
-    	
+
 	    while(STOP == FALSE && timeouts < 3){
-	        
+
 		    sendSUFrame(DISC);
 	        alarm(3);
 	        readMessage(answer);
@@ -345,7 +366,7 @@ int llclose(int fd){
 			    sendSUFrame(DISC);
 		        alarm(3);
 		        readMessage(answer);
-		    
+
 		        if(analyse(answer) == UA){
 		            STOP = TRUE;
 		        }
@@ -507,7 +528,7 @@ int main(int argc, char** argv) {
 	*/
 
     if ( tcsetattr(appLayer.fd,TCSANOW,&oldtio) == -1) {
-		
+
       perror("tcsetattr");
       exit(-1);
     }
