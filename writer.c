@@ -182,7 +182,7 @@ char *readMessage(){
 
 char makeBCC2(char * packet){
 
-	char lixo;
+	char lixo='a';
 	return lixo;
 }
 
@@ -192,13 +192,15 @@ char * createIframe(char *packet, int numPacketBytes){
 
 	frame[0] = FLAG;
 	frame[1] = ADDRESS_SEND;
-	frame[2] = numTrama;
+	frame[2] = ns;
+	ns = ns^NS;
 	frame[3] = frame[1]^frame[2];
 
 	memcpy(&frame[4], packet, numPacketBytes);
 
-	frame[5] = makeBCC2(packet);
-	frame[6] = FLAG;
+	//frame[5] = makeBCC2(packet);
+	frame[4 + numPacketBytes] = FLAG;
+	return frame;
 }
 
 char *createDataPacket(int fd){ // bytestufs maxFrames from file
@@ -294,8 +296,36 @@ char *createIFrameControl(int type, int fd){
 	return packet;
 }
 
-int readIFrame(){
+int readControlPacket(char *msg){
+	int size = 0;
+	char *name;
+	char length;
+	switch(msg[5]){
+		case 0x00:
+			length = msg[6];
 
+			int i;
+			for (i = 0; i < length; i++) {
+				size += (msg[7+i] * 0x100^(length - 1 - i));
+			}
+
+	}
+	return 0;
+}
+
+int readIFrame(char *msg){
+
+	int type = msg[4];
+	switch(type){
+		case I_CTRL_START:
+			readControlPacket(msg);
+			break;
+		case I_CTRL_DATA:
+			break;
+		case I_CTRL_END:
+			break;
+	}
+	return -1;
 }
 
 /*
@@ -341,7 +371,6 @@ int llopen(){
 	if(appLayer.transmission == TRANSMITTER){
 
 		STOP = FALSE;
-		int res = 0;
 	    while (STOP == FALSE && timeouts < 3) {
 	        sendSUFrame(SET);
 	        alarm(3);
@@ -354,7 +383,6 @@ int llopen(){
 	    }
 	}
 	else {
-		int res;
 
 		msg = readMessage();
 		if(analyse(msg) == SET){
@@ -384,6 +412,7 @@ int llclose(int fd){
 	            sendSUFrame(UA);
 	            STOP = TRUE;
 	        }
+			free(msg);
    		}
     } else if(appLayer.transmission == RECEIVER){
 
@@ -395,9 +424,9 @@ int llclose(int fd){
 	        if(analyse(msg) == UA){
 	            STOP = TRUE;
 	        }
+			free(msg);
 		}
     }
-    free(msg);
     resetTimer();
     return 0;
 }
@@ -405,7 +434,7 @@ int llclose(int fd){
 /*  Envio de informacao do lado do emissor*/
 int transfer(){
 
-    char *msg;
+    //char *msg;
     int fd = open("pinguim.gif", O_RDONLY);
     if(fd < 0){
     	printf("Error opening file. Error: %d\n", fd);
@@ -435,7 +464,7 @@ int receive(){
 				if(analyse(msg) == ns){	//control for I frames
 					ns = ns^NS;
 
-					readIFrame();
+					readIFrame(msg);
 
 				}
 				break;
@@ -444,6 +473,7 @@ int receive(){
 					llclose(appLayer.fd);
 					state = TERMINATE;
 				}
+				break;
 		}
 	}
     return 0;
@@ -541,7 +571,7 @@ int main(int argc, char** argv) {
     }
 
     printf("New termios structure set\n");
-    llopen(gate, appLayer.transmission);
+    llopen();
     printf("Opened correctly. Starting close\n");
 	int gif = open("pinguim.gif", O_RDONLY);
     char * packet = createIFrameControl(START, gif);
