@@ -9,6 +9,7 @@ unsigned int packetSize = 100;
 unsigned int frameSize = 108; //por isto depois de ler do user ou assim
 volatile int timeouts = 0;
 unsigned int ns = 0x00, nr = 0x00;
+unsigned int packetSeq = 0;
 unsigned int numTrama = 0;
 struct termios oldtio,newtio;
 struct applicationLayer appLayer;
@@ -68,12 +69,12 @@ int readByte(char byte, int status){
     return -1;
 }
 
-int makePayload(int fd, char *data){ //Stuffing + BCC2
+char makePayload(int fd, char *data){ //BCC2 + Stuffing
 
 	int it = 0;
 	//char * data = malloc(sizeof(char) * lLayer.maxFrames * 2);
-    int res;
-	char bcc = 0x00;
+  int res;
+	char bcc = data[0];
 
 	do {
 		char byte;
@@ -85,7 +86,6 @@ int makePayload(int fd, char *data){ //Stuffing + BCC2
 		}
 
 		//BCC
-
 
 		//Stuffing
 		if(byte == FLAG){
@@ -100,7 +100,10 @@ int makePayload(int fd, char *data){ //Stuffing + BCC2
 		it++;
 
 	} while(it < 200);	//numBytes (dado pelo user)
-    return 0;
+
+	packetSeq++;
+
+    return bcc;
 }
 
 char * byteDestuffing(char * data){
@@ -168,6 +171,24 @@ int sendSUFrame(char type){
     return 0;
 }
 
+char *codeFileSize(int fileSize, int *num){
+	int nBytes = 4, remainder, iterator = 0;
+	char *size = malloc(sizeof(char) * nBytes);
+
+	do {
+		remainder = fileSize % 0x100;
+		fileSize /= 0x100;
+		printf("remainder %x\n",(unsigned char) remainder);
+		if(remainder > 0){
+			size[(*num)] = remainder;
+			(*num)++;
+		}
+		iterator++;
+	} while(remainder > 0);
+
+	return size;
+}
+
 char *readMessage(){
     char buf;
 	int ansLength = 0, status = 0;
@@ -196,13 +217,26 @@ char *readMessage(){
     return NULL;
 }
 
-char makeBCC2(char * packet){
+char * createDataPacket(char * dataStuffed, int seq, char bcc){ //com data stuffed, flags nao stuffed e bcc sobre isso
 
-	char lixo='a';
-	return lixo;
+		char * packet;
+
+		packet[0] = 0x01;
+		packet[1] = packetSeq;
+		char * octetos = codeFileSize(packetSize, 0);
+		packet[2] = octetos[0];
+		packet[3] = octetos[1];
+		packet[4] = dataStuffed;
+
+		bcc = packet[0] ^ packet[1] ^ packet[2] ^ packet[3] ^ bcc;
+
+		packet[5] = bcc;
+
+		return packet;
+
 }
 
-char * createIframe(char *packet, int numPacketBytes){ //falta BCC2
+char * createIframe(int fd, char *data, int numPacketBytes){ //adiciona flags, chama makeplayload
 
 	char * frame = malloc(sizeof(char) * frameSize);
 
@@ -212,43 +246,31 @@ char * createIframe(char *packet, int numPacketBytes){ //falta BCC2
 	ns = ns^NS;
 	frame[3] = frame[1]^frame[2];
 
-	memcpy(&frame[4], packet, numPacketBytes); //numPacketBytes e o do packet ja duplicado
+	memcpy(&frame[4], data, numPacketBytes); //numPacketBytes e o do packet ja duplicado
 
-	//frame[5] = makeBCC2(packet);
-	frame[4 + numPacketBytes] = FLAG;
-	return frame;
-}
+	char bcc = makePayload(fd, data); //packet stuffed, bcc calculado
+	if(bcc < 0) {
+		printf("Erro no makePayload");
+		return -1;
+	}
+//	frame[4] = packet;
+//	frame[4 + numPacketBytes] = bcc;
 
-char *createDataPacket(int fd, fim){
+	char * packet = createDataPacket(data, packetSeq, bcc);
 
+	frame[4] = packet;
 }
 
 char *getData(){ // bytestufs maxFrames from file. fim == 0: fim de ficheiro sem erro
+
     char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
 
-	//fim = byteStuffing(fd, data);
+	  int fim = makePayload(appLayer.fd, data);
 
     if (fim == 0){
     	return data;
-	else return -1;
-}
-
-char *codeFileSize(int fileSize, int *num){
-	int nBytes = 4, remainder, iterator = 0;
-	char *size = malloc(sizeof(char) * nBytes);
-
-	do {
-		remainder = fileSize % 0x100;
-		fileSize /= 0x100;
-		printf("remainder %x\n",(unsigned char) remainder);
-		if(remainder > 0){
-			size[(*num)] = remainder;
-			(*num)++;
 		}
-		iterator++;
-	} while(remainder > 0);
-
-	return size;
+	else return -1;
 }
 
 char *createControlPacket(int type, int fd, int *pacLength){
@@ -388,15 +410,14 @@ int readIFrame(char *msg){
 int llwrite(int fd, char* msg, int length){
 
 	STOP = FALSE;
-	char * dataPacket;
+	char * data;
 	int res;
 	char * frame;
 	int fim;
 
 	while(TRUE){
-		dataPacket = createDataPacket(fd, &fim);
 
-		if(dataPacker < 0){
+		if(data < 0){
 			printf("llwrite: Erro ao ler dataPacket\n");
 			return -1;
 		}
@@ -405,7 +426,7 @@ int llwrite(int fd, char* msg, int length){
 			break;
 		}
 
-		frame = createIframe(dataPacket, lLayer.maxFrames * 2);
+		frame = createIframe(fd, data, lLayer.maxFrames * 2);
 
 		res = write(appLayer.fd, frame, frameSize);
 
@@ -413,9 +434,10 @@ int llwrite(int fd, char* msg, int length){
 			printf("llwrite: erro ao escrever\n");
 			return -1;
 		}
-
+	}
   return 0;
 }
+
 
 int llread(){
 
@@ -508,7 +530,6 @@ int transfer(){
     }
 
     //msg = createSUFrame(START);
-    //createDataPacket(fd);
 
     close(fd);
     return 0;
