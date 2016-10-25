@@ -32,13 +32,17 @@ void resetTimer(){
 	alarm(0);
 }
 
-char *getBCC(char *packet, int length){
+int checkBCC2(char *packet, int length){
 		int i;
-		char *bcc = malloc(sizeof(char) * length);
-		for (i = 0; i < length; i++) {
-				bcc[i] = (packet[i]^0xFF);
+		char bcc;
+		for (i = 0; i < (length - 1); i++) {
+				bcc = bcc ^ packet[i];
 		}
-		return bcc;
+		if(bcc == packet[length -1]){
+			return bcc;
+		} else{
+			return -1;
+		}
 }
 
 int readByte(char byte, int status){
@@ -81,7 +85,7 @@ int makePayload(int fd, char *data){ //Stuffing + BCC2
 		}
 
 		//BCC
-		
+
 
 		//Stuffing
 		if(byte == FLAG){
@@ -102,9 +106,16 @@ int makePayload(int fd, char *data){ //Stuffing + BCC2
 char * byteDestuffing(char * data){
 
 	char * destuffed = malloc(sizeof(char) * frameSize);
-	int i = 0;
-	for (; i < frameSize; ++i){
 
+	int i = 4, j = 0;
+	for (; i < frameSize; ++i){
+		if(data[i] == 0x7E){
+			break;
+		}
+		if(i >= frameSize){
+			frameSize *= 2;
+			destuffed = realloc(destuffed, frameSize);
+		}
 		if(data[i] == 0x7D && data[i+1] == 0x5E){
 			destuffed[i] = 0x7E;
 			continue;
@@ -113,7 +124,7 @@ char * byteDestuffing(char * data){
 			destuffed[i] = 0x7D;
 			continue;
 		}
-		destuffed[i] = data[i];
+		destuffed[j++] = data[i];
 
 	}
 	return destuffed;
@@ -212,7 +223,6 @@ char *createDataPacket(int fd, fim){
 
 }
 
-
 char *getData(){ // bytestufs maxFrames from file. fim == 0: fim de ficheiro sem erro
     char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
 
@@ -303,35 +313,50 @@ char *createIFrameControl(int type, int fd){
 }
 
 int readDataPacket(char *msg){
+	int fd = open("pinguim.gif", O_APPEND | O_CREAT, S_IRWXU);
+	int sequenceNumber = msg[1];
+	if(sequenceNumber == 0){	//last sequence number
 
-
+	}
+	int nBytes = msg[2] * 0x100 + msg[3];
+	int bcc=0;
+	int i;
+	for (i = 0; i < nBytes+4; i++) {
+		bcc = bcc^msg[i];
+	}
+	if(bcc != msg[4+nBytes]){
+		return -1;
+	}
+	write(fd, &msg[4], nBytes);
+	close(fd);
 	return 0;
 }
 
-int readControlPacket(char *msg, int *fileSize, char *name){
+int readControlPacket(char *msg, int *fileSize){
 	int size = 0, i;
 	char sizeBytes, nameBytes;
-	switch(msg[5]){
+	char *name;
+	switch(msg[1]){
 		case 0x00:	//type
 
-			sizeBytes = msg[6];
+			sizeBytes = msg[2];
 			for (i = 0; i < sizeBytes; i++) {
-				size += (msg[7+i] * 0x100^i);
+				size += (msg[3+i] * 0x100^i);
 			}
 
-			nameBytes = msg[7+sizeBytes];
+			nameBytes = msg[3+sizeBytes];
 			name = malloc(nameBytes * sizeof(char));
-			memcpy(name, &msg[8+sizeBytes], nameBytes);
+			memcpy(name, &msg[4+sizeBytes], nameBytes);
 			break;
 		case 0x01:	//name
 
-			nameBytes = msg[6];
+			nameBytes = msg[2];
 			name = malloc(nameBytes * sizeof(char));
-			memcpy(name, &msg[7], nameBytes);
+			memcpy(name, &msg[3], nameBytes);
 
-			sizeBytes = msg[7 + nameBytes];
+			sizeBytes = msg[3 + nameBytes];
 			for (i = 0; i < sizeBytes; i++) {
-				size += (msg[8+nameBytes+i] * 0x100^i);
+				size += (msg[4+nameBytes+i] * 0x100^i);
 			}
 			break;
 	}
@@ -341,23 +366,25 @@ int readControlPacket(char *msg, int *fileSize, char *name){
 
 int readIFrame(char *msg){
 
-	int type = msg[4];
-	char *name;
+	char *dataDestuffed = byteDestuffing(msg);
+	int type = dataDestuffed[0];
 	int size;
 	switch(type){
 		case I_CTRL_START:
-			readControlPacket(msg, &size, name);
+			readControlPacket(dataDestuffed, &size);
 			return I_CTRL_START;
 		case I_CTRL_DATA:
-			readDataPacket(msg);
+			readDataPacket(dataDestuffed);
 			return I_CTRL_DATA;
 		case I_CTRL_END:
-			readControlPacket(msg, &size, name);
+			readControlPacket(dataDestuffed, &size);
 			return I_CTRL_END;
 	}
+	free(dataDestuffed);
 	return -1;
 }
 
+/*
 int llwrite(int fd, char* msg, int length){
 
 	STOP = FALSE;
@@ -404,7 +431,7 @@ int llread(){
 	//readMessage()
     return 0;
 }
-
+*/
 int llopen(){
 
 	char *msg;
@@ -481,7 +508,7 @@ int transfer(){
     }
 
     //msg = createSUFrame(START);
-    createDataPacket(fd);
+    //createDataPacket(fd);
 
     close(fd);
     return 0;
@@ -505,7 +532,6 @@ int receive(){
 					ns = ns^NS;
 
 					readIFrame(msg);
-
 				}
 				break;
 			case DISCONNECT:
@@ -513,6 +539,9 @@ int receive(){
 					llclose(appLayer.fd);
 					state = TERMINATE;
 				}
+				break;
+
+			case TERMINATE:
 				break;
 		}
 	}
