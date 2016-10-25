@@ -33,17 +33,26 @@ void resetTimer(){
 	alarm(0);
 }
 
-int checkBCC2(char *packet, int length){
-		int i;
-		char bcc;
-		for (i = 0; i < (length - 1); i++) {
-				bcc = bcc ^ packet[i];
-		}
-		if(bcc == packet[length -1]){
-			return bcc;
-		} else{
-			return -1;
-		}
+char getBCC2(char *packet, int length){		//descobre o bcc2 pra retornar
+	int i;
+	char bcc;
+	for (i = 0; i < (length); i++) {
+			bcc = bcc ^ packet[i];
+	}
+	return bcc;
+}
+
+int checkBCC2(char *packet, int length){	//inclui o bcc2 no packet
+	int i;
+	char bcc;
+	for (i = 0; i < (length - 1); i++) {
+			bcc = bcc ^ packet[i];
+	}
+	if(bcc == packet[length -1]){
+		return TRUE;
+	} else{
+		return FALSE;
+	}
 }
 
 int readByte(char byte, int status){
@@ -69,66 +78,35 @@ int readByte(char byte, int status){
     return -1;
 }
 
-char makePayload(int fd, char *data){ //BCC2 + Stuffing
-
-	int it = 0;
-	//char * data = malloc(sizeof(char) * lLayer.maxFrames * 2);
-  int res;
-	char bcc = data[0];
-
-	do {
-		char byte;
-		res = read(fd, &byte, 1);
-
-		if(res <= 0){
-			printf("Erro ao ler o ficheiro\n");
-			return -1;
-		}
-
-		//BCC
-
-		//Stuffing
-		if(byte == FLAG){
-			data[it] = 0x7D;
-			data[++it] = 0x5E;
-		} else if (byte == 0x7D){
-			data[it] = 0x7D;
-			data[++it] = 0x5D;
-		} else{
-			data[it] = byte;
-		}
-		it++;
-
-	} while(it < 200);	//numBytes (dado pelo user)
-
-	packetSeq++;
-
-    return bcc;
+void byteStuffing(char *data, int *it, char byte){
+	if(byte == FLAG){
+		data[*it] = 0x7D;
+		data[++(*it)] = 0x5E;
+	} else if (byte == 0x7D){
+		data[*it] = 0x7D;
+		data[++(*it)] = 0x5D;
+	} else{
+		data[*it] = byte;
+	}
+	(*it)++;
 }
 
-char * byteDestuffing(char * data){
+char *byteDestuffing(char *data, int msgLength){
 
-	char * destuffed = malloc(sizeof(char) * frameSize);
-
+	char * destuffed = malloc(sizeof(char) * msgLength);
 	int i = 4, j = 0;
-	for (; i < frameSize; ++i){
-		if(data[i] == 0x7E){
-			break;
-		}
-		if(i >= frameSize){
-			frameSize *= 2;
-			destuffed = realloc(destuffed, frameSize);
-		}
+	while(data[i] != FLAG){
 		if(data[i] == 0x7D && data[i+1] == 0x5E){
-			destuffed[i] = 0x7E;
+			destuffed[j++] = 0x7E;
+			i+=2;
 			continue;
 		}
 		if(data[i] == 0x7D && data[i+1] == 0x5D){
-			destuffed[i] = 0x7D;
+			destuffed[j++] = 0x7D;
+			i+=2;
 			continue;
 		}
-		destuffed[j++] = data[i];
-
+		destuffed[j++] = data[i++];
 	}
 	return destuffed;
 }
@@ -189,12 +167,13 @@ char *codeFileSize(int fileSize, int *num){
 	return size;
 }
 
-char *readMessage(){
+char *readMessage(int *size){
     char buf;
-	int ansLength = 0, status = 0;
+	int msgLength = 0, status = 0;
     int res;
+
     again = TRUE;
-    char *answer = malloc(sizeof(char) * 30);
+    char *msg = malloc(sizeof(char) *(*size));
 
     while(again == TRUE){
 
@@ -202,13 +181,17 @@ char *readMessage(){
 		if(waitFlag == FALSE){
 	        if((res = read(appLayer.fd, &buf, 1)) > 0){
 	            status = readByte(buf, status);
-	            answer[ansLength] = buf;
-	            ansLength++;
+				if(msgLength > (*size)){
+					(*size) += 50;
+					msg = realloc(msg, (*size));
+				}
+	            msg[msgLength] = buf;
+	            msgLength++;
 
 	            if(status == 3){
-	                if(answer[3]==(answer[1]^answer[2])){
+	                if(msg[3]==(msg[1]^msg[2])){
 	                	again = FALSE;
-	                    return 0;
+	                    return msg;
 	                }
 	            }
 	        } else waitFlag = TRUE;
@@ -217,63 +200,32 @@ char *readMessage(){
     return NULL;
 }
 
-char * createDataPacket(char * dataStuffed, int seq, char bcc){ //com data stuffed, flags nao stuffed e bcc sobre isso
+char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 
-		char * packet;
+	char * data = malloc(sizeof(char) * (200 * 2 + 1));
+ 	int res;
 
-		packet[0] = 0x01;
-		packet[1] = packetSeq;
-		char * octetos = codeFileSize(packetSize, 0);
-		packet[2] = octetos[0];
-		packet[3] = octetos[1];
-		packet[4] = dataStuffed;
+	do {
+		char byte;
+		res = read(fd, &byte, 1);
 
-		bcc = packet[0] ^ packet[1] ^ packet[2] ^ packet[3] ^ bcc;
-
-		packet[5] = bcc;
-
-		return packet;
-
-}
-
-char * createIframe(int fd, char *data, int numPacketBytes){ //adiciona flags, chama makeplayload
-
-	char * frame = malloc(sizeof(char) * frameSize);
-
-	frame[0] = FLAG;
-	frame[1] = ADDRESS_SEND;
-	frame[2] = ns;
-	ns = ns^NS;
-	frame[3] = frame[1]^frame[2];
-
-	memcpy(&frame[4], data, numPacketBytes); //numPacketBytes e o do packet ja duplicado
-
-	char bcc = makePayload(fd, data); //packet stuffed, bcc calculado
-	if(bcc < 0) {
-		printf("Erro no makePayload");
-		return -1;
-	}
-//	frame[4] = packet;
-//	frame[4 + numPacketBytes] = bcc;
-
-	char * packet = createDataPacket(data, packetSeq, bcc);
-
-	frame[4] = packet;
-}
-
-char *getData(){ // bytestufs maxFrames from file. fim == 0: fim de ficheiro sem erro
-
-    char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
-
-	  int fim = makePayload(appLayer.fd, data);
-
-    if (fim == 0){
-    	return data;
+		if(res < 0){
+			printf("Error reading from gif no %d\n", errno);
+			return NULL;
+		} else if(res == 0){
+			break;
 		}
-	else return -1;
+		(*bcc) = (*bcc)^byte;
+		byteStuffing(data, it, byte);
+
+	} while((*it) < 200);	//numBytes (dado pelo user)
+
+	packetSeq++;
+
+    return data;
 }
 
-char *createControlPacket(int type, int fd, int *pacLength){
+char *createControlPacket(int fd, int type, int *pacLength){
 
 	struct stat s;
 	if (fstat(fd, &s) == -1) {
@@ -291,7 +243,6 @@ char *createControlPacket(int type, int fd, int *pacLength){
 	if((*pacLength) < ((*pacLength) + nBytes-1)){
 		(*pacLength) += nBytes - 1;
 		packet = realloc(packet, (*pacLength));
-
 	}
 
 	packet[2] = nBytes;		//number of bytes
@@ -302,13 +253,110 @@ char *createControlPacket(int type, int fd, int *pacLength){
 	if((*pacLength) < ((*pacLength) + nameLength - 1)){
 		(*pacLength) += nameLength - 1;
 		packet = realloc(packet, (*pacLength));
-
 	}
 	packet[4 + nBytes] = nameLength;		//number of bytes
 	memcpy(&(packet[5 + nBytes]), "pinguim.gif", nameLength);
 
+	char bcc = getBCC2(packet, (*pacLength));
+
+	if((*pacLength) < ((*pacLength) + 1)){
+		(*pacLength) += 1;
+		packet = realloc(packet, (*pacLength));
+	}
+
+	packet[(*pacLength)-1] = bcc;
 	return packet;
 }
+
+char * createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuffed e bcc sobre isso
+
+	char * packet = malloc(sizeof(char) * 200);
+
+	packet[0] = DATA;
+	packet[1] = packetSeq;
+
+	char * nBytes = codeFileSize(packetSize, 0);
+	packet[2] = nBytes[0];
+	packet[3] = nBytes[1];
+
+	char bcc = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
+	char *stuffed = makePayload(fd, &bcc, length);
+	byteStuffing(stuffed, length, bcc);
+
+	memcpy(&packet[4], stuffed, *length+3);
+
+	return packet;
+
+}
+
+int sendIFrame(int fd, char *frame){
+	char *msg;
+	int size = strlen(frame);
+	while (STOP == FALSE && timeouts < 3) {
+		write(appLayer.fd, frame, size);
+		alarm(3);
+		msg = readMessage(&size);
+
+		if(analyse(msg) == (RR | nr)){
+			nr = nr^NR;
+			printf("Acknowledged START.\n");
+			STOP = TRUE;
+			resetTimer();
+		}
+		free(msg);
+	}
+	return 0;
+}
+
+char * createIFrame(int fd, int type){ //adiciona flags, chama makeplayload
+
+	char *frame = malloc(sizeof(char) * 20);
+	char *packet, *stuffed;
+	int length = 7;
+
+	frame[0] = FLAG;
+	frame[1] = ADDRESS_SEND;
+	frame[2] = NS;
+	//ns = ns^NS;
+	frame[3] = frame[1]^frame[2];
+
+	switch (type) {
+		case START:
+		case END:
+			packet = createControlPacket(fd, type, &length);	//contem ja bcc
+			stuffed = malloc(sizeof(char) * length * 2);
+			int i = 0, j = 0;
+
+			while(j < length){
+				byteStuffing(stuffed, &i, packet[j++]);
+			}
+			free(packet);
+			length = i;
+			memcpy(&frame[4], stuffed, length);
+			frame[4 + i] = FLAG;
+			break;
+
+		case DATA:
+			length = 0;
+			stuffed = createDataPacket(fd, &length);
+			memcpy(&frame[4], stuffed, length);
+			break;
+	}
+	frame[4+length] = FLAG;
+	return frame;
+}
+
+/*char *getData(){ // bytestuffs maxFrames from file. fim == 0: fim de ficheiro sem erro
+
+    char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
+
+	  int fim = makePayload(appLayer.fd, data);
+
+    if (fim == 0){
+    	return data;
+		}
+	else return NULL;
+}*/
 
 char *createIFrameControl(int type, int fd){
 
@@ -325,11 +373,11 @@ char *createIFrameControl(int type, int fd){
 	packet[3] = (packet[1]^packet[2]);	//BCC
 
 	memcpy(&packet[4], controlPacket, pacSize);
-	char *bcc = getBCC(controlPacket, pacSize);
-	memcpy(&packet[4 + pacSize], bcc, pacSize);
+	char bcc = checkBCC2(controlPacket, pacSize);
+	memcpy(&packet[4 + pacSize], &bcc, pacSize);
 	packet[4 + 2*pacSize] = FLAG;
 
-	free(bcc);
+	//free(bcc);
 	free(controlPacket);
 	return packet;
 }
@@ -354,10 +402,9 @@ int readDataPacket(char *msg){
 	return 0;
 }
 
-int readControlPacket(char *msg, int *fileSize){
+int readControlPacket(char *msg, int *fileSize, char *name){
 	int size = 0, i;
 	char sizeBytes, nameBytes;
-	char *name;
 	switch(msg[1]){
 		case 0x00:	//type
 
@@ -386,61 +433,63 @@ int readControlPacket(char *msg, int *fileSize){
 	return 0;
 }
 
-int readIFrame(char *msg){
+int readIFrame(char *msg, int msgLength){
 
-	char *dataDestuffed = byteDestuffing(msg);
+	char *dataDestuffed = byteDestuffing(msg, msgLength);
+	int destuffedLength = strlen(dataDestuffed);
+
+	if(checkBCC2(dataDestuffed, destuffedLength) == FALSE){
+		printf("Error confirming BCC2.\n");
+		return -1;
+	}
 	int type = dataDestuffed[0];
 	int size;
+	char *name = NULL;
 	switch(type){
-		case I_CTRL_START:
-			readControlPacket(dataDestuffed, &size);
-			return I_CTRL_START;
-		case I_CTRL_DATA:
+		case START:
+			readControlPacket(dataDestuffed, &size, name);
+			close(open(name, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU));
+			free(name);
+		case DATA:
 			readDataPacket(dataDestuffed);
-			return I_CTRL_DATA;
-		case I_CTRL_END:
-			readControlPacket(dataDestuffed, &size);
-			return I_CTRL_END;
+		case END:
+			readControlPacket(dataDestuffed, &size, name);
+			free(name);
+			state = DISCONNECT;
+		default:
+			return -1;
 	}
 	free(dataDestuffed);
-	return -1;
+	return 0;
 }
 
-/*
-int llwrite(int fd, char* msg, int length){
+int llwrite(int fd){
 
 	STOP = FALSE;
-	char * data;
-	int res;
-	char * frame;
-	int fim;
+	char *frame;
+	int w = 0;
 
-	while(TRUE){
+	int type = START;
 
-		if(data < 0){
-			printf("llwrite: Erro ao ler dataPacket\n");
-			return -1;
-		}
+	while(w == 0){
+		frame = createIFrame(fd, type);
 
-		if(fim == 0){ //fim de ficheiro sem erro
-			break;
-		}
-
-		frame = createIframe(fd, data, lLayer.maxFrames * 2);
-
-		res = write(appLayer.fd, frame, frameSize);
-
-		if(res < 0){
-			printf("llwrite: erro ao escrever\n");
-			return -1;
+		switch (type) {
+			case START:
+				sendIFrame(fd, frame);
+				type = END;
+				break;
+			case END:
+				w = 1;
+				sendIFrame(fd, frame);
+				break;
 		}
 	}
-  return 0;
+	return 0;
 }
 
-
 int llread(){
-
+	/*
 	while (STOP == FALSE) {
 		int size;
 		char *msg = readIFrame(&size);
@@ -449,55 +498,52 @@ int llread(){
 			char *destuffed = byteDestuffing(msg);
 			sendSUFrame(RR);
 		}
-	}
+	}*/
 	//readMessage()
     return 0;
 }
-*/
+
 int llopen(){
 
 	char *msg;
+	int size;
 	if(appLayer.transmission == TRANSMITTER){
 
 		STOP = FALSE;
 	    while (STOP == FALSE && timeouts < 3) {
 	        sendSUFrame(SET);
 	        alarm(3);
-	        msg = readMessage();
+	        msg = readMessage(&size);
 
 			if(analyse(msg) == UA){
-				printf("Recognized UA\n");
+				printf("Connection established.\n");
 				STOP = TRUE;
+				resetTimer();
 			}
+			free(msg);
 	    }
+	} else {
+		sendSUFrame(UA);
+		printf("Setup aknowlegded. Preparing for transfer\n");
+		state = TRANSFERING;
 	}
-	else {
-
-		msg = readMessage();
-		if(analyse(msg) == SET){
-			sendSUFrame(UA);
-			STOP = TRUE;
-			printf("Setup aknowlegded. Sending UA\n");
-		}
-	}
-	free(msg);
-	resetTimer();
     return 0;
 }
 
 /*  Envia DISC e espera por UA ou por DISC dependendo se emite ou recebe*/
-int llclose(int fd){
+int llclose(){
 	char *msg;
 	STOP = FALSE;
+	int size;
     if(appLayer.transmission == TRANSMITTER){
 
 	    while(STOP == FALSE && timeouts < 3){
 
 		    sendSUFrame(DISC);
 	        alarm(3);
-	        msg = readMessage();
+	        msg = readMessage(&size);
 	        if(analyse(msg) == DISC){
-	        	printf("Received DISC sending UA\n");
+	        	printf("Ended transmission\n");
 	            sendSUFrame(UA);
 	            STOP = TRUE;
 	        }
@@ -505,13 +551,14 @@ int llclose(int fd){
    		}
     } else if(appLayer.transmission == RECEIVER){
 
-        while(STOP == FALSE){
+        while(STOP == FALSE && timeouts < 3){
 		    sendSUFrame(DISC);
 	        alarm(3);
-	        msg = readMessage();
+	        msg = readMessage(&size);
 
 	        if(analyse(msg) == UA){
 	            STOP = TRUE;
+				printf("Confirmed transmission termination\n" );
 	        }
 			free(msg);
 		}
@@ -523,73 +570,82 @@ int llclose(int fd){
 /*  Envio de informacao do lado do emissor*/
 int transfer(){
 
-    //char *msg;
     int fd = open("pinguim.gif", O_RDONLY);
     if(fd < 0){
     	printf("Error opening file. Error: %d\n", fd);
     }
-
-    //msg = createSUFrame(START);
-
-    close(fd);
-    return 0;
-}
-
-int receive(){
-
 	while(state != TERMINATE){
-		char *msg = readMessage();
-		switch(state){
+	    switch(state){
 			case BEGIN:
-				if(analyse(msg) == SET){
-					llopen();
-					state = TRANSFERING;
-				} else{
-					sendSUFrame(REJ);
-				}
+				llopen();
+				state = TRANSFERING;
 				break;
 			case TRANSFERING:
-				if(analyse(msg) == ns){	//control for I frames
-					ns = ns^NS;
-
-					readIFrame(msg);
-				}
+				llwrite(fd);
+				state = DISCONNECT;
 				break;
 			case DISCONNECT:
-				if(analyse(msg) == DISC){
-					llclose(appLayer.fd);
-					state = TERMINATE;
-				}
+				llclose();
+				state = TERMINATE;
 				break;
 
 			case TERMINATE:
 				break;
 		}
 	}
+
+    close(fd);
+    return 0;
+}
+
+int receiver(){
+	int size = 20, res;
+	while(state != TERMINATE){
+		char *msg = readMessage(&size);
+		switch(state){
+			case BEGIN:
+				if(analyse(msg) == SET){
+					res = llopen();
+				} else{
+					sendSUFrame(REJ);
+					//nr = nr^NR;
+				}
+				break;
+			case TRANSFERING:
+				if(analyse(msg) == NS){	//control for I frames
+					//ns = ns^NS;
+					res = readIFrame(msg, size);
+					if(res > 0){
+						sendSUFrame(RR);
+						//nr = nr^NR;
+					}
+				}
+				break;
+			case DISCONNECT:
+				if(analyse(msg) == DISC){
+					res = llclose();
+					state = TERMINATE;
+				} else{
+					sendSUFrame(REJ);
+					nr = nr^NR;
+				}
+				break;
+
+			case TERMINATE:
+				break;
+		}
+		free(msg);
+	}
     return 0;
 }
 
 int main(int argc, char** argv) {
-
-    //int fd;
-    int sum = 0, speed = 0;
-
 
     if ( (argc < 3) ||
   	     ((strcmp("/dev/ttyS0", argv[1])!=0) &&
   	      (strcmp("/dev/ttyS1", argv[1])!=0) )) {
       printf("Usage:\tnserial SerialPort ConnectionMode Ba\n\tex: nserial /dev/ttyS1 TRANSMITTER||RECEIVER\n");
       exit(1);
-    }
-
-    int gate;
-    if(strcmp("/dev/ttyS0", argv[1])==0){
-    	gate = 0;
-    } else if(strcmp("/dev/ttyS1", argv[1])==0){
-    	gate = 1;
-    } else{
-   	printf("SerialPort not recognized\n\tuse: /dev/ttyS0 || /dev/ttyS1\n");
-      	exit(1);
     }
 
     if(strcmp("TRANSMITTER", argv[2])==0){
@@ -629,13 +685,11 @@ int main(int argc, char** argv) {
     actionAlarm.sa_handler = alarmHandler;
     sigemptyset(&actionAlarm.sa_mask);
     actionAlarm.sa_flags = 0;
-
     if (sigaction(SIGALRM,&actionAlarm, NULL) < 0)
     {
         fprintf(stderr,"Unable to install SIGALRM handler\n");
         exit(1);
     }
-
 
 	struct sigaction actionIO;
     actionIO.sa_handler = signalHandlerIO;
@@ -645,12 +699,8 @@ int main(int argc, char** argv) {
         fprintf(stderr,"Unable to install SIGIO handler\n");
         exit(3);
 	}
-
     fcntl(appLayer.fd, F_SETOWN, getpid());
     fcntl(appLayer.fd, F_SETFL, FASYNC);
-
-
-
 
     tcflush(appLayer.fd, TCIOFLUSH);
 
@@ -661,43 +711,12 @@ int main(int argc, char** argv) {
     }
 
     printf("New termios structure set\n");
-    llopen();
-    printf("Opened correctly. Starting close\n");
-	int gif = open("pinguim.gif", O_RDONLY);
-    char * packet = createIFrameControl(START, gif);
-    free(packet);
-    llclose(appLayer.fd);
 
-
-
-	/*
-	int gif = open("pinguim.gif", O_RDONLY);
-
-	char pic;
-	char data[255];
-	int it = 0;
-	*/
-
-	/*
-	while(it < 255){
-		read( gif, pic, 1);
-		if(pic == FLAG){
-			data[it] = 0x7D;
-			data[++it] = 0x5E;
-		} else if (pic == 0x7D){
-			data[it] = 0x7D;
-			data[++it] = 0x5D;
-		} else{
-			data[it] = pic;
-		}
-		it++;
-
-		if(it == 255){
-			createSendFrame();
-			it =0;
-		}
+	if(appLayer.transmission == TRANSMITTER){
+		transfer();
+	} else{
+		receiver();
 	}
-	*/
 
     if ( tcsetattr(appLayer.fd,TCSANOW,&oldtio) == -1) {
 
