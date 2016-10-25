@@ -64,11 +64,12 @@ int readByte(char byte, int status){
     return -1;
 }
 
-int byteStuffing(int fd, char *data){
+int makePayload(int fd, char *data){ //Stuffing + BCC2
 
 	int it = 0;
 	//char * data = malloc(sizeof(char) * lLayer.maxFrames * 2);
     int res;
+	char bcc = 0x00;
 
 	do {
 		char byte;
@@ -76,9 +77,13 @@ int byteStuffing(int fd, char *data){
 
 		if(res <= 0){
 			printf("Erro ao ler o ficheiro\n");
-			break;
+			return -1;
 		}
 
+		//BCC
+		
+
+		//Stuffing
 		if(byte == FLAG){
 			data[it] = 0x7D;
 			data[++it] = 0x5E;
@@ -90,7 +95,7 @@ int byteStuffing(int fd, char *data){
 		}
 		it++;
 
-	} while(it < 200);	//numBytes
+	} while(it < 200);	//numBytes (dado pelo user)
     return 0;
 }
 
@@ -186,7 +191,7 @@ char makeBCC2(char * packet){
 	return lixo;
 }
 
-char * createIframe(char *packet, int numPacketBytes){
+char * createIframe(char *packet, int numPacketBytes){ //falta BCC2
 
 	char * frame = malloc(sizeof(char) * frameSize);
 
@@ -196,17 +201,26 @@ char * createIframe(char *packet, int numPacketBytes){
 	ns = ns^NS;
 	frame[3] = frame[1]^frame[2];
 
-	memcpy(&frame[4], packet, numPacketBytes);
+	memcpy(&frame[4], packet, numPacketBytes); //numPacketBytes e o do packet ja duplicado
 
 	//frame[5] = makeBCC2(packet);
 	frame[4 + numPacketBytes] = FLAG;
 	return frame;
 }
 
-char *createDataPacket(int fd){ // bytestufs maxFrames from file
+char *createDataPacket(int fd, fim){
+
+}
+
+
+char *getData(){ // bytestufs maxFrames from file. fim == 0: fim de ficheiro sem erro
     char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
-    byteStuffing(fd, data);
-    return data;
+
+	//fim = byteStuffing(fd, data);
+
+    if (fim == 0){
+    	return data;
+	else return -1;
 }
 
 char *codeFileSize(int fileSize, int *num){
@@ -328,25 +342,36 @@ int readIFrame(char *msg){
 	return -1;
 }
 
-/*
 int llwrite(int fd, char* msg, int length){
 
 	STOP = FALSE;
+	char * dataPacket;
 	int res;
+	char * frame;
+	int fim;
 
-	while(STOP == FALSE){
-    	res = byteStuffing(fd, data); //maxbytes de cada vez
+	while(TRUE){
+		dataPacket = createDataPacket(fd, &fim);
 
-		if(res > 0){
-
-				//createDataPacket
-
+		if(dataPacker < 0){
+			printf("llwrite: Erro ao ler dataPacket\n");
+			return -1;
 		}
 
-	}
+		if(fim == 0){ //fim de ficheiro sem erro
+			break;
+		}
 
+		frame = createIframe(dataPacket, lLayer.maxFrames * 2);
 
-  return res;
+		res = write(appLayer.fd, frame, frameSize);
+
+		if(res < 0){
+			printf("llwrite: erro ao escrever\n");
+			return -1;
+		}
+
+  return 0;
 }
 
 int llread(){
@@ -363,7 +388,6 @@ int llread(){
 	//readMessage()
     return 0;
 }
-*/
 
 int llopen(){
 
