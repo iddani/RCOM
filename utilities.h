@@ -16,8 +16,6 @@
 #define FALSE 				0
 #define TRUE 				1
 
-#define COUNTER_MODULE		0x40
-
 #define FLAG 				0x7E
 #define ADDRESS_SEND 		0x03
 #define ADDRESS_RECV 		0x01
@@ -28,6 +26,8 @@
 #define	UA				0x07
 #define RR				0x05
 #define	REJ				0x01
+#define NS 				0x40
+#define NR 				0x80
 
 #define I_CTRL_DATA			0x01
 #define I_CTRL_START		0x02
@@ -53,7 +53,7 @@ struct applicationLayer {
 };
 
 typedef enum {
-	BEGIN, TRANSFERING, END
+	BEGIN, TRANSFERING, DISCONNECT, TERMINATE
 }State;
 
 struct linkLayer {

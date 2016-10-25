@@ -6,13 +6,14 @@ volatile int STOP=FALSE;
 volatile int waitFlag = TRUE;
 volatile int again = TRUE;
 unsigned int packetSize = 100;
-unsigned int frameSize = packetSize + 8; //por isto depois de ler do user ou assim
+unsigned int frameSize = 108; //por isto depois de ler do user ou assim
 volatile int timeouts = 0;
-unsigned int ns = 0x00;
+unsigned int ns = 0x00, nr = 0x00;
 unsigned int numTrama = 0;
 struct termios oldtio,newtio;
 struct applicationLayer appLayer;
 struct linkLayer lLayer;
+State state;
 
 
 void signalHandlerIO(int status){
@@ -33,7 +34,7 @@ void resetTimer(){
 
 char *getBCC(char *packet, int length){
 		int i;
-		char bcc = malloc(sizeof(char) * length);
+		char *bcc = malloc(sizeof(char) * length);
 		for (i = 0; i < length; i++) {
 				bcc[i] = (packet[i]^0xFF);
 		}
@@ -126,37 +127,18 @@ char analyse(char msg[]){
 int createSUFrame(char type, char *frame){
 
 	frame[0] = FLAG;
-	frame[4] = FLAG;
-
 	switch(appLayer.transmission){
 		case TRANSMITTER:
 			frame[1] = ADDRESS_SEND;
 			break;
 		case RECEIVER:
-			frame[1] = ADDRESS_RECV;
+			frame[1] = ADDRESS_SEND;
 			break;
 	}
 
-	switch(type){
-		case SET:
-			frame[2] = SET;
-			break;
-		case DISC:
-			frame[2] = DISC;
-			break;
-		case UA:
-			frame[2] = UA;
-			break;
-		case RR:
-
-			break;
-		case REJ:
-
-			break;
-        default:
-            break;
-	}
+	frame[2] = type;
     frame[3] = (frame[1]^frame[2]);
+    frame[4] = FLAG;
 	return 0;
 }
 
@@ -170,11 +152,12 @@ int sendSUFrame(char type){
     return 0;
 }
 
-int readMessage(char *answer){
+char *readMessage(){
     char buf;
 	int ansLength = 0, status = 0;
     int res;
     again = TRUE;
+    char *answer = malloc(sizeof(char) * 30);
 
     while(again == TRUE){
 
@@ -194,14 +177,13 @@ int readMessage(char *answer){
 	        } else waitFlag = TRUE;
 	   	}
     }
-    return -1;
+    return NULL;
 }
 
 char makeBCC2(char * packet){
 
 	char lixo;
 	return lixo;
-
 }
 
 char * createIframe(char *packet, int numPacketBytes){
@@ -217,7 +199,6 @@ char * createIframe(char *packet, int numPacketBytes){
 
 	frame[5] = makeBCC2(packet);
 	frame[6] = FLAG;
-
 }
 
 char *createDataPacket(int fd){ // bytestufs maxFrames from file
@@ -237,7 +218,6 @@ char *codeFileSize(int fileSize, int *num){
 		printf("remainder %x\n",(unsigned char) remainder);
 		if(remainder > 0){
 			reverse[(*num)] = remainder;
-			printf("%x\n", (unsigned char) reverse[(*num)]);
 			(*num)++;
 		}
 		iterator++;
@@ -271,10 +251,7 @@ char *createControlPacket(int type, int fd, int *pacLength){
 	if((*pacLength) < ((*pacLength) + nBytes-1)){
 		(*pacLength) += nBytes - 1;
 		packet = realloc(packet, (*pacLength));
-<<<<<<< HEAD
-=======
 
->>>>>>> bbda746ac5c0b2f5c9e2541a763328d92121ee13
 	}
 
 	packet[2] = nBytes;		//number of bytes
@@ -303,7 +280,7 @@ char *createIFrameControl(int type, int fd){
 	packet[0] = FLAG;
 
 	packet[1] = ADDRESS_SEND;
-	ns = (ns^COUNTER_MODULE);
+	ns = (ns^NS);
 	packet[2] = ns;
 	packet[3] = (packet[1]^packet[2]);	//BCC
 
@@ -317,16 +294,22 @@ char *createIFrameControl(int type, int fd){
 	return packet;
 }
 
+int readIFrame(){
+
+}
+
+/*
 int llwrite(int fd, char* msg, int length){
 
 	STOP = FALSE;
+	int res;
 
 	while(STOP == FALSE){
-    int res = byteStuffing(fd, data); //maxbytes de cada vez
+    	res = byteStuffing(fd, data); //maxbytes de cada vez
 
 		if(res > 0){
 
-				createDataPacket
+				//createDataPacket
 
 		}
 
@@ -343,50 +326,51 @@ int llread(){
 		char *msg = readIFrame(&size);
 
 		if(TRUE){	//sem erros detectados no cabeçalho e no campo de dados
-			char *destuffed = byteDestuffing(msg, size);
+			char *destuffed = byteDestuffing(msg);
 			sendSUFrame(RR);
 		}
 	}
-	readMessage()
+	//readMessage()
     return 0;
 }
+*/
 
-int llopen(int gate, ConnectionMode connection){
+int llopen(){
 
-	if(connection == TRANSMITTER){
+	char *msg;
+	if(appLayer.transmission == TRANSMITTER){
 
 		STOP = FALSE;
 		int res = 0;
-		char answer[20];
 	    while (STOP == FALSE && timeouts < 3) {
 	        sendSUFrame(SET);
 	        alarm(3);
-	        res = readMessage(answer);
+	        msg = readMessage();
 
-			if(analyse(answer) == UA){
+			if(analyse(msg) == UA){
 				printf("Recognized UA\n");
 				STOP = TRUE;
 			}
 	    }
 	}
 	else {
-		char msg[20];
 		int res;
 
-		readMessage(msg);
+		msg = readMessage();
 		if(analyse(msg) == SET){
 			sendSUFrame(UA);
 			STOP = TRUE;
 			printf("Setup aknowlegded. Sending UA\n");
 		}
 	}
+	free(msg);
 	resetTimer();
-    return gate;
+    return 0;
 }
 
 /*  Envia DISC e espera por UA ou por DISC dependendo se emite ou recebe*/
 int llclose(int fd){
-	char answer[5];
+	char *msg;
 	STOP = FALSE;
     if(appLayer.transmission == TRANSMITTER){
 
@@ -394,8 +378,8 @@ int llclose(int fd){
 
 		    sendSUFrame(DISC);
 	        alarm(3);
-	        readMessage(answer);
-	        if(analyse(answer) == DISC){
+	        msg = readMessage();
+	        if(analyse(msg) == DISC){
 	        	printf("Received DISC sending UA\n");
 	            sendSUFrame(UA);
 	            STOP = TRUE;
@@ -403,19 +387,17 @@ int llclose(int fd){
    		}
     } else if(appLayer.transmission == RECEIVER){
 
-    	readMessage(answer);
-        if(analyse(answer) == DISC){
-            while(STOP == FALSE){
-			    sendSUFrame(DISC);
-		        alarm(3);
-		        readMessage(answer);
+        while(STOP == FALSE){
+		    sendSUFrame(DISC);
+	        alarm(3);
+	        msg = readMessage();
 
-		        if(analyse(answer) == UA){
-		            STOP = TRUE;
-		        }
-   			}
-        }
+	        if(analyse(msg) == UA){
+	            STOP = TRUE;
+	        }
+		}
     }
+    free(msg);
     resetTimer();
     return 0;
 }
@@ -438,6 +420,32 @@ int transfer(){
 
 int receive(){
 
+	while(state != TERMINATE){
+		char *msg = readMessage();
+		switch(state){
+			case BEGIN:
+				if(analyse(msg) == SET){
+					llopen();
+					state = TRANSFERING;
+				} else{
+					sendSUFrame(REJ);
+				}
+				break;
+			case TRANSFERING:
+				if(analyse(msg) == ns){	//control for I frames
+					ns = ns^NS;
+
+					readIFrame();
+
+				}
+				break;
+			case DISCONNECT:
+				if(analyse(msg) == DISC){
+					llclose(appLayer.fd);
+					state = TERMINATE;
+				}
+		}
+	}
     return 0;
 }
 
