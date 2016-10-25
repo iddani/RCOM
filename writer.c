@@ -211,26 +211,18 @@ char *createDataPacket(int fd){ // bytestufs maxFrames from file
 
 char *codeFileSize(int fileSize, int *num){
 	int nBytes = 4, remainder, iterator = 0;
-	char reverse[nBytes];
-
+	char *size = malloc(sizeof(char) * nBytes);
 
 	do {
 		remainder = fileSize % 0x100;
 		fileSize /= 0x100;
 		printf("remainder %x\n",(unsigned char) remainder);
 		if(remainder > 0){
-			reverse[(*num)] = remainder;
+			size[(*num)] = remainder;
 			(*num)++;
 		}
 		iterator++;
 	} while(remainder > 0);
-
-	char *size = malloc(sizeof(char) * (*num));
-
-	int i;
-	for (i = 0; i < (*num); ++i) {
-		size[i] = reverse[(*num)-1-i];
-	}
 
 	return size;
 }
@@ -296,34 +288,58 @@ char *createIFrameControl(int type, int fd){
 	return packet;
 }
 
-int readControlPacket(char *msg){
-	int size = 0;
-	char *name;
-	char length;
-	switch(msg[5]){
-		case 0x00:
-			length = msg[6];
+int readDataPacket(char *msg){
 
-			int i;
-			for (i = 0; i < length; i++) {
-				size += (msg[7+i] * 0x100^(length - 1 - i));
+
+	return 0;
+}
+
+int readControlPacket(char *msg, int *fileSize, char *name){
+	int size = 0, i;
+	char sizeBytes, nameBytes;
+	switch(msg[5]){
+		case 0x00:	//type
+
+			sizeBytes = msg[6];
+			for (i = 0; i < sizeBytes; i++) {
+				size += (msg[7+i] * 0x100^i);
 			}
 
+			nameBytes = msg[7+sizeBytes];
+			name = malloc(nameBytes * sizeof(char));
+			memcpy(name, &msg[8+sizeBytes], nameBytes);
+			break;
+		case 0x01:	//name
+
+			nameBytes = msg[6];
+			name = malloc(nameBytes * sizeof(char));
+			memcpy(name, &msg[7], nameBytes);
+
+			sizeBytes = msg[7 + nameBytes];
+			for (i = 0; i < sizeBytes; i++) {
+				size += (msg[8+nameBytes+i] * 0x100^i);
+			}
+			break;
 	}
+	(*fileSize) = size;
 	return 0;
 }
 
 int readIFrame(char *msg){
 
 	int type = msg[4];
+	char *name;
+	int size;
 	switch(type){
 		case I_CTRL_START:
-			readControlPacket(msg);
-			break;
+			readControlPacket(msg, &size, name);
+			return I_CTRL_START;
 		case I_CTRL_DATA:
-			break;
+			readDataPacket(msg);
+			return I_CTRL_DATA;
 		case I_CTRL_END:
-			break;
+			readControlPacket(msg, &size, name);
+			return I_CTRL_END;
 	}
 	return -1;
 }
