@@ -91,7 +91,7 @@ void byteStuffing(char *data, int *it, char byte){
 	(*it)++;
 }
 
-char *byteDestuffing(char *data, int msgLength){
+char *byteDestuffing(char *data, int msgLength, int *destuffedLength){
 
 	char * destuffed = malloc(sizeof(char) * msgLength);
 	int i = 4, j = 0;
@@ -108,6 +108,7 @@ char *byteDestuffing(char *data, int msgLength){
 		}
 		destuffed[j++] = data[i++];
 	}
+	(*destuffedLength) = j;
 	return destuffed;
 }
 
@@ -191,6 +192,7 @@ char *readMessage(int *size){
 	            if(status == 3){
 	                if(msg[3]==(msg[1]^msg[2])){
 	                	again = FALSE;
+						(*size) = msgLength;
 	                    return msg;
 	                }
 	            }
@@ -435,9 +437,16 @@ int readControlPacket(char *msg, int *fileSize, char *name){
 
 int readIFrame(char *msg, int msgLength){
 
-	char *dataDestuffed = byteDestuffing(msg, msgLength);
-	int destuffedLength = strlen(dataDestuffed);
-
+	int destuffedLength;
+	char *dataDestuffed = byteDestuffing(msg, msgLength, &destuffedLength);
+	for (size_t i = 0; i < msgLength; i++) {
+		printf("packet %x\n", (unsigned char)msg[i]);
+		/* code */
+	}
+	for (size_t i = 0; i < destuffedLength; i++) {
+		printf("destuffed %x\n", (unsigned char)dataDestuffed[i]);
+		/* code */
+	}
 	if(checkBCC2(dataDestuffed, destuffedLength) == FALSE){
 		printf("Error confirming BCC2.\n");
 		return -1;
@@ -449,16 +458,18 @@ int readIFrame(char *msg, int msgLength){
 		case START:
 			readControlPacket(dataDestuffed, &size, name);
 			close(open(name, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU));
-			free(name);
+			break;
 		case DATA:
 			readDataPacket(dataDestuffed);
+			break;
 		case END:
 			readControlPacket(dataDestuffed, &size, name);
-			free(name);
 			state = DISCONNECT;
+			break;
 		default:
 			return -1;
 	}
+	free(name);
 	free(dataDestuffed);
 	return 0;
 }
@@ -600,8 +611,10 @@ int transfer(){
 
 int receiver(){
 	int size = 20, res;
+	char t;
 	while(state != TERMINATE){
 		char *msg = readMessage(&size);
+		printf("msgSize %d\n", size);
 		switch(state){
 			case BEGIN:
 				if(analyse(msg) == SET){
@@ -612,19 +625,22 @@ int receiver(){
 				}
 				break;
 			case TRANSFERING:
-				if(analyse(msg) == NS){	//control for I frames
-					//ns = ns^NS;
+
+				if((t=analyse(msg)) == NS){	//control for I frames
+					printf("analysed transfer correctly\n");
 					res = readIFrame(msg, size);
-					if(res > 0){
+					printf("readIframe res: %d\n", res);
+					if(res == 0){
 						sendSUFrame(RR);
 						//nr = nr^NR;
 					}
-				}
+				} else printf("falhou analyse. ctrl: %x\n", t);
 				break;
 			case DISCONNECT:
 				if(analyse(msg) == DISC){
 					res = llclose();
 					state = TERMINATE;
+					printf("OH MY GOD\n");
 				} else{
 					sendSUFrame(REJ);
 					nr = nr^NR;
