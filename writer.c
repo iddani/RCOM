@@ -46,7 +46,7 @@ char getBCC2(char *packet, int length){		//descobre o bcc2 pra retornar
 
 int checkBCC2(char *packet, int length){	//inclui o bcc2 no packet
 	int i;
-	char bcc;
+	char bcc = 0x00;
 	for (i = 0; i < (length - 1); i++) {
 			bcc = bcc ^ packet[i];
 	}
@@ -93,8 +93,7 @@ void byteStuffing(char *data, int *it, char byte){
 	(*it)++;
 }
 
-char *byteDestuffing(char *data, int msgLength, int *destuffedLength){
-
+char * byteDestuffing(char *data, int msgLength, int * destuffedLength){
 	char * destuffed = malloc(sizeof(char) * msgLength);
 	int i = 0, j = 0;
 	while(data[i] != FLAG){
@@ -175,6 +174,7 @@ char *readMessage(int *size){
     int res;
 
     again = TRUE;
+	waitFlag = TRUE;
     char *msg = malloc(sizeof(char) *(*size));
 
     while(again == TRUE){
@@ -183,7 +183,7 @@ char *readMessage(int *size){
 		if(waitFlag == FALSE){
 	        if((res = read(appLayer.fd, &buf, 1)) > 0){
 	            status = readByte(buf, status);
-				if(msgLength > (*size)){
+				if(msgLength >= (*size)){
 					(*size) += 50;
 					msg = realloc(msg, (*size));
 				}
@@ -191,13 +191,19 @@ char *readMessage(int *size){
 	            msgLength++;
 
 	            if(status == 3){
-	                if(msg[3]==(msg[1]^msg[2])){
+	                if(msg[3] == (msg[1]^msg[2]) ){
 	                	again = FALSE;
 						(*size) = msgLength;
+						printf("cenas\n" );
 	                    return msg;
-	                }
+	                }else {
+						msgLength = 0;
+						status = 0;
+					}
 	            }
-	        } else waitFlag = TRUE;
+	        } else if (res == 0) { printf("Res deu 0!\n" );
+				waitFlag = TRUE;
+			}
 	   	}
     }
     return NULL;
@@ -433,19 +439,14 @@ int readIFrame(char *msg, int msgLength){
 
 	int destuffedLength;
 	char *dataDestuffed = byteDestuffing(msg, msgLength, &destuffedLength);
-	int i;
-	for (i = 0; i < msgLength; i++) {
-		printf("packet %x\n", (unsigned char)msg[i]);
-		/* code */
-	}
-	for (i = 0; i < destuffedLength; i++) {
-		printf("destuffed %x\n", (unsigned char)dataDestuffed[i]);
-		/* code */
-	}
+
 	if(checkBCC2(dataDestuffed, destuffedLength) == FALSE){
 		printf("Error confirming BCC2.\n");
 		return -1;
 	}
+
+	printf("bcc2: %x\n", dataDestuffed[destuffedLength-1]);
+
 	int type = dataDestuffed[0];
 	int size;
 	char *name = NULL;
@@ -473,7 +474,7 @@ int llwrite(int fd){
 
 	STOP = FALSE;
 	char *frame;
-	int type = START, size, res;
+	int type = END, size, res;
 
 	while(STOP == FALSE && timeouts < 3){
 		STOP = FALSE;
@@ -646,6 +647,9 @@ int receiver(){
 				if((t=analyse(msg)) == NS){	//control for I frames
 					printf("analysed transfer correctly\n");
 					res = readIFrame(msg, size);
+
+					printf("readIframe res: %d\n", res);
+
 
 					if(res == 0){
 						sendSUFrame(RR);
