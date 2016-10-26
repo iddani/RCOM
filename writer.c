@@ -84,6 +84,7 @@ void byteStuffing(char *data, int *it, char byte){
 	if(byte == FLAG){
 		data[*it] = 0x7D;
 		data[++(*it)] = 0x5E;
+		printf("STUFFEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdd\n");
 	} else if (byte == 0x7D){
 		data[*it] = 0x7D;
 		data[++(*it)] = 0x5D;
@@ -232,7 +233,7 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 		}
 		byteStuffing(data, it, byte);
 
-	} while((*it) < 100);	//numBytes (dado pelo user)
+	} while((*it) < 500);	//numBytes (dado pelo user)
 
 	byteStuffing(data,it, *bcc);
     return data;
@@ -284,20 +285,21 @@ char *createControlPacket(int fd, int type, int *pacLength){
 char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuffed e bcc sobre isso
 
 	char * packet = malloc(sizeof(char) * 200);
+	int it =0;
+	int num;
+	char * nBytes = codeFileSize(packetSize, &num);
+	char bcc = DATA ^ packetSeq ^ nBytes[0] ^ nBytes[1];
 
-	packet[0] = DATA;
-	packet[1] = packetSeq++;
+	byteStuffing(packet, &it, DATA);
+	byteStuffing(packet, &it, packetSeq++);
 	if(packetSeq > 255){
 		packetSeq = 0;
 	}
 
-	int num;
-	char * nBytes = codeFileSize(packetSize, &num);
-	packet[2] = nBytes[0];
-	packet[3] = nBytes[1];
-	free(nBytes);
+	byteStuffing(packet, &it, nBytes[0]);
+	byteStuffing(packet, &it, nBytes[1]);
 
-	char bcc = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
+	free(nBytes);
 	char *stuffed = makePayload(fd, &bcc, length);
 	printf("bcc2: %x\n", bcc);
 
@@ -305,10 +307,10 @@ char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuff
 		packet = realloc(packet, 5+(*length));
 	}
 
-	memcpy(&packet[4], stuffed, *length);
-	packet[4+(*length)] = FLAG;
+	memcpy(&packet[it], stuffed, *length);
+	packet[it+(*length)] = FLAG;
 	free(stuffed);
-	(*length) += 4;
+	(*length) += it;
 	return packet;
 
 }
@@ -318,11 +320,8 @@ int sendIFrame(int fd, char *frame, int size){
 	while (STOP == FALSE && timeouts < 3) {
 		int res = write(appLayer.fd, frame, size);
 		printf("Wrote I frame with %d bytes to fd\n", res);
-		alarm(3);
-		int i;
-		for (i = 0; i < size; i++) {
-			printf("frame ind %d: %x \n", i, frame[i]);
-		}
+		alarm(5);
+
 		msg = readMessage(&size);
 
 		if(msg != NULL){
@@ -474,12 +473,13 @@ int llwrite(int fd){
 
 	STOP = FALSE;
 	char *frame;
-	int type = END, size, res;
+	int type = START, size, res;
 
 	while(STOP == FALSE && timeouts < 3){
 		STOP = FALSE;
 		frame = createIFrame(fd, type, &size);
 		res = sendIFrame(fd, frame, size);
+		printf("envia/recebe\n");
 		switch (type) {
 			case START:
 				if(res == 0){
