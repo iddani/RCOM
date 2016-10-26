@@ -94,8 +94,8 @@ void byteStuffing(char *data, int *it, char byte){
 }
 
 char * byteDestuffing(char *data, int msgLength, int * destuffedLength){
-	char * destuffed = malloc(sizeof(char) * msgLength);
-	int i = 0, j = 0;
+	char *destuffed = malloc(sizeof(char) * msgLength);
+	int i = 4, j = 0;
 	while(data[i] != FLAG){
 		if(data[i] == 0x7D && data[i+1] == 0x5E){
 			destuffed[j++] = 0x7E;
@@ -179,29 +179,38 @@ char *readMessage(int *size){
 
     while(again == TRUE){
 
-    	write(1, ".", 1); usleep(100000);
+		if(waitFlag == TRUE){
+    		write(1, ".", 1); usleep(100000);
+		}
 		if(waitFlag == FALSE){
 	        if((res = read(appLayer.fd, &buf, 1)) > 0){
 	            status = readByte(buf, status);
 				if(msgLength >= (*size)){
 					(*size) += 50;
 					msg = realloc(msg, (*size));
+					if(msg == NULL){
+						printf("EERRRROOOOOORRRRR\n");
+					}
+					printf("reallocated\n");
 				}
 	            msg[msgLength] = buf;
 	            msgLength++;
-
+				//printf("buffer %x\n", (unsigned char)buf);
 	            if(status == 3){
+					//printf("saiiiiiiiiiiiiiiiiiiiiiiiiiiiii\n");
 	                if(msg[3] == (msg[1]^msg[2]) ){
 	                	again = FALSE;
 						(*size) = msgLength;
 						printf("cenas\n" );
 	                    return msg;
 	                }else {
+						printf("Not correct msg\n");
 						msgLength = 0;
 						status = 0;
 					}
 	            }
-	        } else if (res == 0) { printf("Res deu 0!\n" );
+	        } else if (res == 0) {
+				printf("Res deu 0!\n" );
 				waitFlag = TRUE;
 			}
 	   	}
@@ -444,16 +453,21 @@ int readIFrame(char *msg, int msgLength){
 		printf("Error confirming BCC2.\n");
 		return -1;
 	}
-
+	//
+	// for (size_t i = 0; i < destuffedLength; i++) {
+	// 	printf("destuffed: %x\n", dataDestuffed[i]);
+	// }
+	printf("Sequence number: %x\n", (unsigned char)dataDestuffed[1]);
 	printf("bcc2: %x\n", dataDestuffed[destuffedLength-1]);
 
 	int type = dataDestuffed[0];
+	printf("Type: %x\n", type);
 	int size;
 	char *name = NULL;
 	switch(type){
 		case START:
 			readControlPacket(dataDestuffed, &size, name);
-			close(open(name, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU));
+			close(open(name, O_CREAT | O_TRUNC | O_WRONLY, 00777));
 			break;
 		case DATA:
 			readDataPacket(dataDestuffed);
@@ -474,7 +488,7 @@ int llwrite(int fd){
 
 	STOP = FALSE;
 	char *frame;
-	int type = END, size, res;
+	int type = START, size, res;
 
 	while(STOP == FALSE && timeouts < 3){
 		STOP = FALSE;
@@ -509,6 +523,7 @@ int llwrite(int fd){
 }
 
 int llread(){
+
 	/*
 	while (STOP == FALSE) {
 		int size;
@@ -628,7 +643,7 @@ int transfer(){
 }
 
 int receiver(){
-	int size = 20, res;
+	int size = 70, res;
 	char t;
 	while(state != TERMINATE){
 		char *msg = readMessage(&size);
