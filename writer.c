@@ -157,7 +157,6 @@ char *codeFileSize(int fileSize, int *num){
 	do {
 		remainder = fileSize % 0x100;
 		fileSize /= 0x100;
-		printf("remainder %x\n",(unsigned char) remainder);
 		if(remainder > 0){
 			size[(*num)] = remainder;
 			(*num)++;
@@ -192,7 +191,11 @@ char *readMessage(int *size){
 	            if(status == 3){
 	                if(msg[3]==(msg[1]^msg[2])){
 	                	again = FALSE;
+<<<<<<< HEAD
 						(*size) = msgLength;
+=======
+						*size = msgLength;
+>>>>>>> 563aed712d8dbd954dab4290f8f0fb70d2a5b091
 	                    return msg;
 	                }
 	            }
@@ -291,26 +294,28 @@ char * createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuf
 
 }
 
-int sendIFrame(int fd, char *frame){
+int sendIFrame(int fd, char *frame, int size){
 	char *msg;
-	int size = strlen(frame);
 	while (STOP == FALSE && timeouts < 3) {
-		write(appLayer.fd, frame, size);
+		int res = write(appLayer.fd, frame, size);
+		printf("Wrote I frame with %d bytes to fd\n", res);
 		alarm(3);
 		msg = readMessage(&size);
 
-		if(analyse(msg) == (RR | nr)){
-			nr = nr^NR;
-			printf("Acknowledged START.\n");
-			STOP = TRUE;
-			resetTimer();
+		if(msg != NULL){
+			if(analyse(msg) == (RR)){
+				//nr = nr^NR;
+				resetTimer();
+				free(msg);
+				return 0;
+			}
 		}
 		free(msg);
 	}
-	return 0;
+	return -1;
 }
 
-char * createIFrame(int fd, int type){ //adiciona flags, chama makeplayload
+char * createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama makeplayload
 
 	char *frame = malloc(sizeof(char) * 20);
 	char *packet, *stuffed;
@@ -345,43 +350,12 @@ char * createIFrame(int fd, int type){ //adiciona flags, chama makeplayload
 			break;
 	}
 	frame[4+length] = FLAG;
+	free(stuffed);
+	for (size_t i = 0; i < 5 + length; i++) {
+		printf("IFrame: %x\n", frame[i]);
+	}
+	(*frameSize) = (5+length);
 	return frame;
-}
-
-/*char *getData(){ // bytestuffs maxFrames from file. fim == 0: fim de ficheiro sem erro
-
-    char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
-
-	  int fim = makePayload(appLayer.fd, data);
-
-    if (fim == 0){
-    	return data;
-		}
-	else return NULL;
-}*/
-
-char *createIFrameControl(int type, int fd){
-
-	//fileInfo
-	int pacSize = 7;
-	char *controlPacket = createControlPacket(type, fd, &pacSize);
-
-	char *packet = malloc(sizeof(char) * 30);
-	packet[0] = FLAG;
-
-	packet[1] = ADDRESS_SEND;
-	ns = (ns^NS);
-	packet[2] = ns;
-	packet[3] = (packet[1]^packet[2]);	//BCC
-
-	memcpy(&packet[4], controlPacket, pacSize);
-	char bcc = checkBCC2(controlPacket, pacSize);
-	memcpy(&packet[4 + pacSize], &bcc, pacSize);
-	packet[4 + 2*pacSize] = FLAG;
-
-	//free(bcc);
-	free(controlPacket);
-	return packet;
 }
 
 int readDataPacket(char *msg){
@@ -478,23 +452,28 @@ int llwrite(int fd){
 
 	STOP = FALSE;
 	char *frame;
-	int w = 0;
+	int type = START, size, res;
 
-	int type = START;
-
-	while(w == 0){
-		frame = createIFrame(fd, type);
-
+	while(STOP == FALSE && timeouts < 3){
+		STOP = FALSE;
+		frame = createIFrame(fd, type, &size);
+		res = sendIFrame(fd, frame, size);
 		switch (type) {
 			case START:
-				sendIFrame(fd, frame);
-				type = END;
+				if(res == 0){
+					printf("Acknowledged START packet\n");
+					type = END;
+				}
 				break;
 			case END:
-				w = 1;
-				sendIFrame(fd, frame);
+				if(res == 0){
+					printf("Acknowledged END packet\n");
+					STOP = TRUE;
+				}
 				break;
 		}
+		free(frame);
+
 	}
 	return 0;
 }
@@ -516,20 +495,22 @@ int llread(){
 
 int llopen(){
 
-	char *msg;
-	int size;
+	int size = CONTROL_PCK_SIZE;
 	if(appLayer.transmission == TRANSMITTER){
 
 		STOP = FALSE;
 	    while (STOP == FALSE && timeouts < 3) {
+			//again = TRUE;
 	        sendSUFrame(SET);
 	        alarm(3);
-	        msg = readMessage(&size);
 
-			if(analyse(msg) == UA){
-				printf("Connection established.\n");
-				STOP = TRUE;
-				resetTimer();
+	        char *msg = readMessage(&size);
+			if(msg != NULL){
+				if(analyse(msg) == UA){
+					printf("Connection established.\n");
+					STOP = TRUE;
+					resetTimer();
+				}
 			}
 			free(msg);
 	    }
@@ -590,13 +571,16 @@ int transfer(){
 			case BEGIN:
 				llopen();
 				state = TRANSFERING;
+				printf("Setting up nice\n");
 				break;
 			case TRANSFERING:
 				llwrite(fd);
+				printf("Transfered yeah\n");
 				state = DISCONNECT;
 				break;
 			case DISCONNECT:
 				llclose();
+				printf("disconnected ouiiiiii\n");
 				state = TERMINATE;
 				break;
 
