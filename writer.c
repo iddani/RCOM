@@ -11,6 +11,7 @@ volatile int timeouts = 0;
 unsigned int ns = 0x00, nr = 0x00;
 unsigned int packetSeq = 0;
 unsigned int numTrama = 0;
+unsigned int eof = FALSE;
 struct termios oldtio,newtio;
 struct applicationLayer appLayer;
 struct linkLayer lLayer;
@@ -191,11 +192,7 @@ char *readMessage(int *size){
 	            if(status == 3){
 	                if(msg[3]==(msg[1]^msg[2])){
 	                	again = FALSE;
-<<<<<<< HEAD
 						(*size) = msgLength;
-=======
-						*size = msgLength;
->>>>>>> 563aed712d8dbd954dab4290f8f0fb70d2a5b091
 	                    return msg;
 	                }
 	            }
@@ -213,8 +210,8 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 	do {
 		char byte;
 		res = read(fd, &byte, 1);
-
-		if(res < 0){
+		if(res == 0) eof = TRUE;
+		else if(res < 0){
 			printf("Error reading from gif no %d\n", errno);
 			return NULL;
 		} else if(res == 0){
@@ -224,8 +221,6 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 		byteStuffing(data, it, byte);
 
 	} while((*it) < 200);	//numBytes (dado pelo user)
-
-	packetSeq++;
 
     return data;
 }
@@ -273,12 +268,15 @@ char *createControlPacket(int fd, int type, int *pacLength){
 	return packet;
 }
 
-char * createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuffed e bcc sobre isso
+char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuffed e bcc sobre isso
 
 	char * packet = malloc(sizeof(char) * 200);
 
 	packet[0] = DATA;
-	packet[1] = packetSeq;
+	packet[1] = packetSeq++;
+	if(packetSeq > 255){
+		packetSeq = 0;
+	}
 
 	char * nBytes = codeFileSize(packetSize, 0);
 	packet[2] = nBytes[0];
@@ -315,7 +313,7 @@ int sendIFrame(int fd, char *frame, int size){
 	return -1;
 }
 
-char * createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama makeplayload
+char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama makeplayload
 
 	char *frame = malloc(sizeof(char) * 20);
 	char *packet, *stuffed;
@@ -339,13 +337,19 @@ char * createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama m
 			}
 			free(packet);
 			length = i;
+			if(20 < (5+length)){
+				frame = realloc(frame, 5+length);
+			}
 			memcpy(&frame[4], stuffed, length);
-			frame[4 + i] = FLAG;
 			break;
 
 		case DATA:
 			length = 0;
 			stuffed = createDataPacket(fd, &length);
+
+			if(20 < (5+length)){
+				frame = realloc(frame, 5+length);
+			}
 			memcpy(&frame[4], stuffed, length);
 			break;
 	}
@@ -462,9 +466,16 @@ int llwrite(int fd){
 			case START:
 				if(res == 0){
 					printf("Acknowledged START packet\n");
-					type = END;
+					type = DATA;
 				}
 				break;
+			case DATA:
+				if(res == 0){
+					if(eof == TRUE){
+						type = END;
+						printf("Finished file transfer\n");
+					}
+				}
 			case END:
 				if(res == 0){
 					printf("Acknowledged END packet\n");
@@ -565,6 +576,7 @@ int transfer(){
     int fd = open("pinguim.gif", O_RDONLY);
     if(fd < 0){
     	printf("Error opening file. Error: %d\n", fd);
+		exit(1);
     }
 	while(state != TERMINATE){
 	    switch(state){
