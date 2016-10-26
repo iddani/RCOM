@@ -21,6 +21,7 @@ State state;
 void signalHandlerIO(int status){
 
 	waitFlag = FALSE;
+	printf("hey\n");
 }
 
 void alarmHandler(int signo) {
@@ -95,7 +96,7 @@ void byteStuffing(char *data, int *it, char byte){
 char *byteDestuffing(char *data, int msgLength, int *destuffedLength){
 
 	char * destuffed = malloc(sizeof(char) * msgLength);
-	int i = 4, j = 0;
+	int i = 0, j = 0;
 	while(data[i] != FLAG){
 		if(data[i] == 0x7D && data[i+1] == 0x5E){
 			destuffed[j++] = 0x7E;
@@ -203,8 +204,8 @@ char *readMessage(int *size){
 }
 
 char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
-
-	char * data = malloc(sizeof(char) * (200 * 2 + 1));
+	int size = 401;
+	char * data = malloc(sizeof(char) * size);
  	int res;
 
 	do {
@@ -218,10 +219,16 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 			break;
 		}
 		(*bcc) = (*bcc)^byte;
+
+		if(size < (*it)+2){
+			data = realloc(data, (*it)+200);
+			size = (*it)+200;
+		}
 		byteStuffing(data, it, byte);
 
-	} while((*it) < 200);	//numBytes (dado pelo user)
+	} while((*it) < 100);	//numBytes (dado pelo user)
 
+	byteStuffing(data,it, *bcc);
     return data;
 }
 
@@ -278,16 +285,24 @@ char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuff
 		packetSeq = 0;
 	}
 
-	char * nBytes = codeFileSize(packetSize, 0);
+	int num;
+	char * nBytes = codeFileSize(packetSize, &num);
 	packet[2] = nBytes[0];
 	packet[3] = nBytes[1];
+	free(nBytes);
 
 	char bcc = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
 	char *stuffed = makePayload(fd, &bcc, length);
-	byteStuffing(stuffed, length, bcc);
+	printf("bcc2: %x\n", bcc);
 
-	memcpy(&packet[4], stuffed, *length+3);
+	if(200 < (4+(*length))){
+		packet = realloc(packet, 5+(*length));
+	}
 
+	memcpy(&packet[4], stuffed, *length);
+	packet[4+(*length)] = FLAG;
+	free(stuffed);
+	(*length) += 4;
 	return packet;
 
 }
@@ -298,6 +313,10 @@ int sendIFrame(int fd, char *frame, int size){
 		int res = write(appLayer.fd, frame, size);
 		printf("Wrote I frame with %d bytes to fd\n", res);
 		alarm(3);
+		int i;
+		for (i = 0; i < size; i++) {
+			printf("frame ind %d: %x \n", i, frame[i]);
+		}
 		msg = readMessage(&size);
 
 		if(msg != NULL){
@@ -308,7 +327,6 @@ int sendIFrame(int fd, char *frame, int size){
 				return 0;
 			}
 		}
-		free(msg);
 	}
 	return -1;
 }
@@ -355,10 +373,8 @@ char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama ma
 	}
 	frame[4+length] = FLAG;
 	free(stuffed);
-	for (size_t i = 0; i < 5 + length; i++) {
-		printf("IFrame: %x\n", frame[i]);
-	}
 	(*frameSize) = (5+length);
+
 	return frame;
 }
 
@@ -417,11 +433,12 @@ int readIFrame(char *msg, int msgLength){
 
 	int destuffedLength;
 	char *dataDestuffed = byteDestuffing(msg, msgLength, &destuffedLength);
-	for (size_t i = 0; i < msgLength; i++) {
+	int i;
+	for (i = 0; i < msgLength; i++) {
 		printf("packet %x\n", (unsigned char)msg[i]);
 		/* code */
 	}
-	for (size_t i = 0; i < destuffedLength; i++) {
+	for (i = 0; i < destuffedLength; i++) {
 		printf("destuffed %x\n", (unsigned char)dataDestuffed[i]);
 		/* code */
 	}
@@ -476,6 +493,7 @@ int llwrite(int fd){
 						printf("Finished file transfer\n");
 					}
 				}
+				break;
 			case END:
 				if(res == 0){
 					printf("Acknowledged END packet\n");
@@ -521,16 +539,18 @@ int llopen(){
 					printf("Connection established.\n");
 					STOP = TRUE;
 					resetTimer();
+					free(msg);
+					return 0;
 				}
 			}
-			free(msg);
 	    }
 	} else {
 		sendSUFrame(UA);
 		printf("Setup aknowlegded. Preparing for transfer\n");
 		state = TRANSFERING;
+		return 0;
 	}
-    return 0;
+    return -1;
 }
 
 /*  Envia DISC e espera por UA ou por DISC dependendo se emite ou recebe*/
@@ -581,9 +601,10 @@ int transfer(){
 	while(state != TERMINATE){
 	    switch(state){
 			case BEGIN:
-				llopen();
-				state = TRANSFERING;
-				printf("Setting up nice\n");
+				if(llopen()==0){
+					state = TRANSFERING;
+					printf("Setting up nice\n");
+				}
 				break;
 			case TRANSFERING:
 				llwrite(fd);
@@ -625,7 +646,7 @@ int receiver(){
 				if((t=analyse(msg)) == NS){	//control for I frames
 					printf("analysed transfer correctly\n");
 					res = readIFrame(msg, size);
-					printf("readIframe res: %d\n", res);
+
 					if(res == 0){
 						sendSUFrame(RR);
 						//nr = nr^NR;
