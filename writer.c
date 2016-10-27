@@ -1,5 +1,5 @@
 /*Non-Canonical Input Processing*/
-
+#include <math.h>
 #include "utilities.h"
 
 volatile int STOP=FALSE;
@@ -21,7 +21,7 @@ State state;
 void signalHandlerIO(int status){
 
 	waitFlag = FALSE;
-	printf("hey\n");
+	//printf("hey\n");
 }
 
 void alarmHandler(int signo) {
@@ -148,7 +148,7 @@ int sendSUFrame(char type){
 	char frame[SU_FRAME_SIZE];
 	createSUFrame(type, frame);
 	res = write(appLayer.fd, frame, SU_FRAME_SIZE);
-	printf("Wrote SU frame with %d bytes to fd\n", res);
+	//printf("Wrote SU frame with %d bytes to fd\n", res);
     return 0;
 }
 
@@ -328,7 +328,7 @@ int sendIFrame(int fd, char *frame, int size){
 	char *msg;
 	while (STOP == FALSE && timeouts < 3) {
 		int res = write(appLayer.fd, frame, size);
-		printf("Wrote I frame with %d bytes to fd\n", res);
+		//printf("Wrote I frame with %d bytes to fd\n", res);
 		alarm(5);
 
 		msg = readMessage(&size);
@@ -393,39 +393,52 @@ char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama ma
 }
 
 int readDataPacket(char *msg){
-	int fd = open("pinguim.gif", O_APPEND | O_CREAT, S_IRWXU);
+    int fd;
+    do{
+        fd = open("pinguim.gif", O_APPEND | O_WRONLY);
+    } while(fd < 0);
+
 	int sequenceNumber = msg[1];
 	if(sequenceNumber == 0){	//last sequence number
 
 	}
-	int nBytes = msg[2] * 0x100 + msg[3];
-	int bcc=0;
-	int i;
-	for (i = 0; i < nBytes+4; i++) {
-		bcc = bcc^msg[i];
-	}
-	if(bcc != msg[4+nBytes]){
-		return -1;
-	}
-	write(fd, &msg[4], nBytes);
+	int nBytes = (unsigned char)msg[3] * 0x100 + (unsigned char)msg[2];
+
+    int res;
+    printf("nBytes: %d\n", nBytes);
+    printf("%x \n", (unsigned char)msg[17]);
+    res = write(fd, &msg[4], nBytes);
+    printf("Wrote %d bytes to file\n", res);
 	close(fd);
 	return 0;
 }
 
-int readControlPacket(char *msg, int *fileSize, char *name){
+int readControlPacket(char *msg, int *fileSize){
 	int size = 0, i;
 	char sizeBytes, nameBytes;
+    char *name = NULL;
 	switch(msg[1]){
 		case 0x00:	//type
-
 			sizeBytes = msg[2];
+            printf("sizeBytes: %d\n", sizeBytes);
 			for (i = 0; i < sizeBytes; i++) {
-				size += (msg[3+i] * 0x100^i);
+                printf("coded file size: %x\n", msg[3+i]);
+                int expon= 1;
+                for (size_t j = 0; j < i; j++) {
+                    expon *= 0x100;
+                }
+				size += ((unsigned char)msg[3+i] * expon);
 			}
-
-			nameBytes = msg[3+sizeBytes];
-			name = malloc(nameBytes * sizeof(char));
-			memcpy(name, &msg[4+sizeBytes], nameBytes);
+            //size += msg[3] * 0x100 + msg[4];
+            printf("File size: %d\n", size);
+			nameBytes = msg[4+sizeBytes];
+            printf("%d\n", nameBytes);
+            printf("File name size: %d\n", nameBytes);
+			name = malloc((nameBytes + 1) * sizeof(char));
+			memcpy(name, &msg[5+sizeBytes], nameBytes);
+            printf("%s\n", name);
+            if(msg[0] == START)
+                close(open(name, O_CREAT | O_TRUNC | O_WRONLY, 00777));
 			break;
 		case 0x01:	//name
 
@@ -438,7 +451,11 @@ int readControlPacket(char *msg, int *fileSize, char *name){
 				size += (msg[4+nameBytes+i] * 0x100^i);
 			}
 			break;
+        default:
+            printf("AAAAAAAAAAAAAALLLLLLLLLLLLLLLLLOOOOOOOOOOOOOO\n");
+            break;
 	}
+    free(name);
 	(*fileSize) = size;
 	return 0;
 }
@@ -452,33 +469,27 @@ int readIFrame(char *msg, int msgLength){
 		printf("Error confirming BCC2.\n");
 		return -1;
 	}
-	//
-	// for (size_t i = 0; i < destuffedLength; i++) {
-	// 	printf("destuffed: %x\n", dataDestuffed[i]);
-	// }
-	printf("Sequence number: %x\n", (unsigned char)dataDestuffed[1]);
-	printf("bcc2: %x\n", dataDestuffed[destuffedLength-1]);
 
 	int type = dataDestuffed[0];
 	printf("Type: %x\n", type);
 	int size;
-	char *name = NULL;
 	switch(type){
 		case START:
-			readControlPacket(dataDestuffed, &size, name);
-			close(open(name, O_CREAT | O_TRUNC | O_WRONLY, 00777));
+			readControlPacket(dataDestuffed, &size);
+
 			break;
 		case DATA:
 			readDataPacket(dataDestuffed);
 			break;
 		case END:
-			readControlPacket(dataDestuffed, &size, name);
+			readControlPacket(dataDestuffed, &size);
+
 			state = DISCONNECT;
 			break;
 		default:
 			return -1;
 	}
-	free(name);
+
 	free(dataDestuffed);
 	return 0;
 }
@@ -647,7 +658,6 @@ int receiver(){
 	char t;
 	while(state != TERMINATE){
 		char *msg = readMessage(&size);
-		printf("msgSize %d\n", size);
 		switch(state){
 			case BEGIN:
 				if(analyse(msg) == SET){
@@ -660,7 +670,6 @@ int receiver(){
 			case TRANSFERING:
 
 				if((t=analyse(msg)) == NS){	//control for I frames
-					printf("analysed transfer correctly\n");
 					res = readIFrame(msg, size);
 
 					printf("readIframe res: %d\n", res);
