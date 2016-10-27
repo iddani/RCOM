@@ -5,7 +5,7 @@
 volatile int STOP=FALSE;
 volatile int waitFlag = TRUE;
 volatile int again = TRUE;
-unsigned int packetSize = 100;
+unsigned int packetSize = 500;
 unsigned int frameSize = 108; //por isto depois de ler do user ou assim
 volatile int timeouts = 0;
 unsigned int ns = 0x00, nr = 0x00;
@@ -21,7 +21,7 @@ State state;
 void signalHandlerIO(int status){
 
 	waitFlag = FALSE;
-	printf("hey\n");
+	//printf("hey\n");
 }
 
 void alarmHandler(int signo) {
@@ -84,10 +84,11 @@ void byteStuffing(char *data, int *it, char byte){
 	if(byte == FLAG){
 		data[*it] = 0x7D;
 		data[++(*it)] = 0x5E;
-		printf("STUFFEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdd\n");
+		printf("STUFFEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdd %d\n", (*it));
 	} else if (byte == 0x7D){
 		data[*it] = 0x7D;
 		data[++(*it)] = 0x5D;
+		printf("STUFFEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdd %d\n", (*it));
 	} else{
 		data[*it] = byte;
 	}
@@ -95,8 +96,8 @@ void byteStuffing(char *data, int *it, char byte){
 }
 
 char * byteDestuffing(char *data, int msgLength, int * destuffedLength){
-	char *destuffed = malloc(sizeof(char) * msgLength);
-	int i = 4, j = 0;
+	char * destuffed = malloc(sizeof(char) * msgLength);
+	int i = 0, j = 0;
 	while(data[i] != FLAG){
 		if(data[i] == 0x7D && data[i+1] == 0x5E){
 			destuffed[j++] = 0x7E;
@@ -153,18 +154,19 @@ int sendSUFrame(char type){
 }
 
 char *codeFileSize(int fileSize, int *num){
-	int nBytes = 4, remainder, iterator = 0;
+	int nBytes = 4, rem, iterator = 0;
 	char *size = malloc(sizeof(char) * nBytes);
 
 	do {
-		remainder = fileSize % 0x100;
+		rem = fileSize % 0x100;
 		fileSize /= 0x100;
-		if(remainder > 0){
-			size[(*num)] = remainder;
+		printf("coded file size ind: %d  value: %x \n", (*num), (unsigned char)rem);
+		if(fileSize >= 0){
+			size[(*num)] = (unsigned char)rem;
 			(*num)++;
 		}
 		iterator++;
-	} while(remainder > 0);
+	} while(rem > 0);
 
 	return size;
 }
@@ -180,38 +182,29 @@ char *readMessage(int *size){
 
     while(again == TRUE){
 
-		if(waitFlag == TRUE){
-    		write(1, ".", 1); usleep(100000);
-		}
+    	write(1, ".", 1); usleep(100000);
 		if(waitFlag == FALSE){
 	        if((res = read(appLayer.fd, &buf, 1)) > 0){
 	            status = readByte(buf, status);
 				if(msgLength >= (*size)){
 					(*size) += 50;
 					msg = realloc(msg, (*size));
-					if(msg == NULL){
-						printf("EERRRROOOOOORRRRR\n");
-					}
-					printf("reallocated\n");
 				}
 	            msg[msgLength] = buf;
 	            msgLength++;
-				//printf("buffer %x\n", (unsigned char)buf);
+
 	            if(status == 3){
-					//printf("saiiiiiiiiiiiiiiiiiiiiiiiiiiiii\n");
 	                if(msg[3] == (msg[1]^msg[2]) ){
 	                	again = FALSE;
 						(*size) = msgLength;
 						printf("cenas\n" );
 	                    return msg;
 	                }else {
-						printf("Not correct msg\n");
 						msgLength = 0;
 						status = 0;
 					}
 	            }
-	        } else if (res == 0) {
-				printf("Res deu 0!\n" );
+	        } else if (res == 0) { printf("Res deu 0!\n" );
 				waitFlag = TRUE;
 			}
 	   	}
@@ -227,7 +220,12 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 	do {
 		char byte;
 		res = read(fd, &byte, 1);
-		if(res == 0) eof = TRUE;
+		if(res == 0) {
+			eof = TRUE;
+			printf("it: %d\n", (*it));
+			packetSize = (*it);
+			printf("packet: %d\n", packetSize);
+		}
 		else if(res < 0){
 			printf("Error reading from gif no %d\n", errno);
 			return NULL;
@@ -242,9 +240,8 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 		}
 		byteStuffing(data, it, byte);
 
-	} while((*it) < 500);	//numBytes (dado pelo user)
+	} while((*it) < packetSize);	//numBytes (dado pelo user)
 
-	byteStuffing(data,it, *bcc);
     return data;
 }
 
@@ -269,7 +266,7 @@ char *createControlPacket(int fd, int type, int *pacLength){
 	}
 
 	packet[2] = nBytes;		//number of bytes
-	memcpy(&(packet[3]), codedSize, nBytes);
+	memcpy(&packet[3], codedSize, nBytes);
 	packet[3 + nBytes] = 0x01;		//type -> name
 
 	int nameLength = strlen("pinguim.gif");
@@ -295,9 +292,9 @@ char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuff
 
 	char * packet = malloc(sizeof(char) * 200);
 	int it =0;
-	int num;
-	char * nBytes = codeFileSize(packetSize, &num);
-	char bcc = DATA ^ packetSeq ^ nBytes[0] ^ nBytes[1];
+	int num = 0;
+
+	char bcc = DATA ^ packetSeq;
 
 	byteStuffing(packet, &it, DATA);
 	byteStuffing(packet, &it, packetSeq++);
@@ -305,21 +302,29 @@ char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuff
 		packetSeq = 0;
 	}
 
+	char *stuffed = makePayload(fd, &bcc, length);
+	char * nBytes = codeFileSize(packetSize, &num);
 	byteStuffing(packet, &it, nBytes[0]);
 	byteStuffing(packet, &it, nBytes[1]);
 
+	bcc = bcc  ^ nBytes[0] ^ nBytes[1];
+
+
 	free(nBytes);
-	char *stuffed = makePayload(fd, &bcc, length);
-	printf("bcc2: %x\n", bcc);
+
+	//printf("bcc2: %x\n", bcc);
 
 	if(200 < (4+(*length))){
 		packet = realloc(packet, 5+(*length));
 	}
 
 	memcpy(&packet[it], stuffed, *length);
-	packet[it+(*length)] = FLAG;
+	it += (*length);
+	byteStuffing(packet,&it, bcc);
+	packet[it] = FLAG;
 	free(stuffed);
-	(*length) += it;
+	(*length) = it;
+	printf("%x\n", (unsigned char)packet[17]);
 	return packet;
 
 }
@@ -452,21 +457,16 @@ int readIFrame(char *msg, int msgLength){
 		printf("Error confirming BCC2.\n");
 		return -1;
 	}
-	//
-	// for (size_t i = 0; i < destuffedLength; i++) {
-	// 	printf("destuffed: %x\n", dataDestuffed[i]);
-	// }
-	printf("Sequence number: %x\n", (unsigned char)dataDestuffed[1]);
+
 	printf("bcc2: %x\n", dataDestuffed[destuffedLength-1]);
 
 	int type = dataDestuffed[0];
-	printf("Type: %x\n", type);
 	int size;
 	char *name = NULL;
 	switch(type){
 		case START:
 			readControlPacket(dataDestuffed, &size, name);
-			close(open(name, O_CREAT | O_TRUNC | O_WRONLY, 00777));
+			close(open(name, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU));
 			break;
 		case DATA:
 			readDataPacket(dataDestuffed);
@@ -523,7 +523,6 @@ int llwrite(int fd){
 }
 
 int llread(){
-
 	/*
 	while (STOP == FALSE) {
 		int size;
@@ -643,7 +642,7 @@ int transfer(){
 }
 
 int receiver(){
-	int size = 70, res;
+	int size = 20, res;
 	char t;
 	while(state != TERMINATE){
 		char *msg = readMessage(&size);
