@@ -181,8 +181,8 @@ char *readMessage(int *size){
 
     while(again == TRUE){
 
-		if(waitFlag == TRUE)
-    		write(1, ".", 1); usleep(100000);
+		//if(waitFlag == TRUE)
+    	//	write(1, ".", 1); usleep(100000);
 		if(waitFlag == FALSE){
 	        if((res = read(appLayer.fd, &buf, 1)) > 0){
 	            status = readByte(buf, status);
@@ -334,7 +334,7 @@ int sendIFrame(int fd, char *frame, int size){
 	char *msg;
 	while (STOP == FALSE && timeouts < 3) {
 		int res = write(appLayer.fd, frame, size);
-		//printf("Wrote I frame with %d bytes to fd\n", res);
+		printf("Wrote I frame with %d bytes to fd\n", res);
 		alarm(5);
 
 		msg = readMessage(&size);
@@ -442,7 +442,7 @@ int readControlPacket(char *msg, int *fileSize){
             printf("File name size: %d\n", nameBytes);
 			name = malloc((nameBytes + 1) * sizeof(char));
 			memcpy(name, &msg[5+sizeBytes], nameBytes);
-            printf("%s\n", name);
+            //printf("%s\n", name);
             if(msg[0] == START)
                 close(open(name, O_CREAT | O_TRUNC | O_WRONLY, 00644));
 			break;
@@ -467,26 +467,9 @@ int readControlPacket(char *msg, int *fileSize){
 }
 
 int readIFrame(char *msg, int msgLength){
-
-	if(msgLength > 400){
-		int i;
-		for ( i = 42; i < 55; i++) {
-			printf("msg ind %d: %x\n", i,msg[i]);
-		}
-
-		printf("msg ind 367: %x\n", msg[367]);
-	}
+	printf("Read %d bytes from serial port\n", msgLength);
 	int destuffedLength;
 	char *dataDestuffed = byteDestuffing(msg, msgLength, &destuffedLength);
-
-	if(msgLength > 400){
-		int i;
-		for ( i = 32; i < 55; i++) {
-			printf("destuffed ind %d: %x\n", i,(unsigned char)dataDestuffed[i]);
-		}
-
-		printf("msg ind 367: %x\n", msg[367]);
-	}
 
 	if(checkBCC2(dataDestuffed, destuffedLength) == FALSE){
 		printf("Error confirming BCC2.\n");
