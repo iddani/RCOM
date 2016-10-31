@@ -19,7 +19,6 @@
 #define FLAG 				0x7E
 #define ADDRESS_SEND 		0x03
 #define ADDRESS_RECV 		0x01
-//#define BCC
 
 #define	SET				0x03
 #define	DISC			0x0B

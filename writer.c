@@ -5,13 +5,14 @@
 volatile int STOP=FALSE;
 volatile int waitFlag = TRUE;
 volatile int again = TRUE;
-unsigned int packetSize = 500;
+unsigned int totalRead = 0;
 unsigned int frameSize = 108; //por isto depois de ler do user ou assim
 volatile int timeouts = 0;
 unsigned int ns = 0x00, nr = 0x00;
 unsigned int packetSeq = 0;
 unsigned int numTrama = 0;
 unsigned int eof = FALSE;
+char *fileName;
 struct termios oldtio,newtio;
 struct applicationLayer appLayer;
 struct linkLayer lLayer;
@@ -147,7 +148,6 @@ int sendSUFrame(char type){
 	char frame[SU_FRAME_SIZE];
 	createSUFrame(type, frame);
 	res = write(appLayer.fd, frame, SU_FRAME_SIZE);
-	//printf("Wrote SU frame with %d bytes to fd\n", res);
     return 0;
 }
 
@@ -158,15 +158,11 @@ char *codeFileSize(int fileSize, int *num){
 	do {
 		rem = fileSize % 0x100;
 		fileSize /= 0x100;
-
 		if(rem > 0){
-			printf("coded file size ind: %d  value: %x \n", (*num), (unsigned char)rem);
-			size[(*num)] = (unsigned char)rem;
-			(*num)++;
+			size[(*num)++] = (unsigned char)rem;
 		}
 		iterator++;
 	} while(rem > 0);
-
 	return size;
 }
 
@@ -214,8 +210,7 @@ char *readMessage(int *size){
 }
 
 char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
-	int size = 401;
-	char * data = malloc(sizeof(char) * size);
+	char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
  	int res, i = 0;
 
 	do {
@@ -223,9 +218,8 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 		res = read(fd, &byte, 1);
 		if(res == 0) {
 			eof = TRUE;
-			printf("it: %d\n", (*it));
-			packetSize = (*it);
-			printf("packet: %d\n", packetSize);
+			lLayer.maxFrames = i;
+			printf("packet: %d\n", lLayer.maxFrames);
 			break;
 		}
 		else if(res < 0){
@@ -233,15 +227,12 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 			return NULL;
 		}
 		(*bcc) = (*bcc)^byte;
-
-		if(size < (*it)+2){
-			data = realloc(data, (*it)+200);
-			size = (*it)+200;
-		}
 		byteStuffing(data, it, byte);
 		i++;
-	} while(i < packetSize);	//numBytes (dado pelo user)
 
+	} while(i < lLayer.maxFrames);
+
+	totalRead += i;
     return data;
 }
 
@@ -256,7 +247,6 @@ char *createControlPacket(int fd, int type, int *pacLength){
 	char *packet = malloc(sizeof(char) * (*pacLength));
 	packet[0] = type;		//control
 	packet[1] = 0x00;		//type -> size
-
 
 	int nBytes = 0;
 	char *codedSize = codeFileSize(size, &nBytes);
@@ -290,7 +280,7 @@ char *createControlPacket(int fd, int type, int *pacLength){
 
 char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuffed e bcc sobre isso
 
-	char * packet = malloc(sizeof(char) * 200);
+	char * packet = malloc(sizeof(char) * lLayer.maxFrames * 2);
 	int it =0;
 	int num = 0;
 
@@ -303,20 +293,16 @@ char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuff
 	}
 
 	char *stuffed = makePayload(fd, &bcc, length);
-	char * nBytes = codeFileSize(packetSize, &num);
+	char * nBytes = codeFileSize(lLayer.maxFrames, &num);
 	byteStuffing(packet, &it, nBytes[0]);
 	if(num < 2) nBytes[1] = 0;
 	byteStuffing(packet, &it, nBytes[1]);
 
 	bcc = bcc  ^ nBytes[0] ^ nBytes[1];
-
-
 	free(nBytes);
 
-	//printf("bcc2: %x\n", bcc);
-
-	if(200 < (4+(*length))){
-		packet = realloc(packet, 5+(*length));
+	if((lLayer.maxFrames * 2) < (4+(*length))){
+		packet = realloc(packet, 20+(*length));
 	}
 
 	memcpy(&packet[it], stuffed, *length);
@@ -368,12 +354,13 @@ char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama ma
 		case END:
 			packet = createControlPacket(fd, type, &length);	//contem ja bcc
 			stuffed = malloc(sizeof(char) * length * 2);
-			int i = 0, j = 0;
 
+			int i = 0, j = 0;
 			while(j < length){
 				byteStuffing(stuffed, &i, packet[j++]);
 			}
 			free(packet);
+
 			length = i;
 			if(20 < (5+length)){
 				frame = realloc(frame, 5+length);
@@ -384,9 +371,8 @@ char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama ma
 		case DATA:
 			length = 0;
 			stuffed = createDataPacket(fd, &length);
-
 			if(20 < (5+length)){
-				frame = realloc(frame, 5+length);
+				frame = realloc(frame, 6+length);
 			}
 			memcpy(&frame[4], stuffed, length);
 			break;
@@ -399,7 +385,7 @@ char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama ma
 }
 
 int readDataPacket(char *msg){
-    int fd = open("pinguim.gif", O_APPEND | O_WRONLY);
+    int fd = open(fileName, O_APPEND | O_WRONLY);
 
 	int sequenceNumber = msg[1];
 	printf("Sequence number %d\n", sequenceNumber);
@@ -409,8 +395,6 @@ int readDataPacket(char *msg){
 	int nBytes = (unsigned char)msg[3] * 0x100 + (unsigned char)msg[2];
 
     int res;
-    printf("nBytes: %d\n", nBytes);
-    printf("%x \n", (unsigned char)msg[17]);
     res = write(fd, &msg[4], nBytes);
 	total += res;
     printf("Wrote %d bytes to file\n", res);
@@ -425,26 +409,21 @@ int readControlPacket(char *msg, int *fileSize){
 	switch(msg[1]){
 		case 0x00:	//type
 			sizeBytes = msg[2];
-            printf("sizeBytes: %d\n", sizeBytes);
+
 			for (i = 0; i < sizeBytes; i++) {
-                printf("coded file size: %x\n", msg[3+i]);
-                int expon= 1;
-				int j;
-                for ( j = 0; j < i; j++) {
+                int expon= 1, j;
+			    for ( j = 0; j < i; j++) {
                     expon *= 0x100;
                 }
 				size += ((unsigned char)msg[3+i] * expon);
 			}
-            //size += msg[3] * 0x100 + msg[4];
             printf("File size: %d\n", size);
 			nameBytes = msg[4+sizeBytes];
-            printf("%d\n", nameBytes);
-            printf("File name size: %d\n", nameBytes);
-			name = malloc((nameBytes + 1) * sizeof(char));
-			memcpy(name, &msg[5+sizeBytes], nameBytes);
-            //printf("%s\n", name);
-            if(msg[0] == START)
+            if(msg[0] == START){
+				fileName = malloc(nameBytes * sizeof(char));
+				memcpy(fileName, &msg[5+sizeBytes], nameBytes);
                 close(open(name, O_CREAT | O_TRUNC | O_WRONLY, 00644));
+			}
 			break;
 		case 0x01:	//name
 
@@ -505,11 +484,10 @@ int llwrite(int fd){
 	char *frame;
 	int type = START, size, res;
 
-	while(STOP == FALSE && timeouts < 3){
+	while(STOP == FALSE && timeouts < lLayer.numTransmissions){
 		STOP = FALSE;
 		frame = createIFrame(fd, type, &size);
 		res = sendIFrame(fd, frame, size);
-		printf("envia/recebe\n");
 		switch (type) {
 			case START:
 				if(res == 0){
@@ -559,10 +537,10 @@ int llopen(){
 	if(appLayer.transmission == TRANSMITTER){
 
 		STOP = FALSE;
-	    while (STOP == FALSE && timeouts < 3) {
+	    while (STOP == FALSE && timeouts < lLayer.numTransmissions) {
 			//again = TRUE;
 	        sendSUFrame(SET);
-	        alarm(3);
+	        alarm(lLayer.timeout);
 
 	        char *msg = readMessage(&size);
 			if(msg != NULL){
@@ -591,10 +569,10 @@ int llclose(){
 	int size;
     if(appLayer.transmission == TRANSMITTER){
 
-	    while(STOP == FALSE && timeouts < 3){
+	    while(STOP == FALSE && timeouts < lLayer.numTransmissions){
 
 		    sendSUFrame(DISC);
-	        alarm(3);
+	        alarm(lLayer.timeout);
 	        msg = readMessage(&size);
 	        if(analyse(msg) == DISC){
 	        	printf("Ended transmission\n");
@@ -605,9 +583,9 @@ int llclose(){
    		}
     } else if(appLayer.transmission == RECEIVER){
 
-        while(STOP == FALSE && timeouts < 3){
+        while(STOP == FALSE && timeouts < lLayer.numTransmissions){
 		    sendSUFrame(DISC);
-	        alarm(3);
+	        alarm(lLayer.timeout);
 	        msg = readMessage(&size);
 
 	        if(analyse(msg) == UA){
@@ -701,6 +679,13 @@ int receiver(){
     return 0;
 }
 
+void defaultSettings(){
+	lLayer.numTransmissions = 3;
+	lLayer.timeout = 3;
+	lLayer.baudRate = 0xB38400;
+	lLayer.maxFrames = 350;
+}
+
 int main(int argc, char** argv) {
 
     if ( (argc < 3) ||
@@ -708,7 +693,9 @@ int main(int argc, char** argv) {
   	      (strcmp("/dev/ttyS1", argv[1])!=0) )) {
       printf("Usage:\tnserial SerialPort ConnectionMode Ba\n\tex: nserial /dev/ttyS1 TRANSMITTER||RECEIVER\n");
       exit(1);
-    }
+  } else{
+	  sprintf(lLayer.port, "%s", argv[1]);
+  }
 
     if(strcmp("TRANSMITTER", argv[2])==0){
     	appLayer.transmission = TRANSMITTER;
@@ -719,7 +706,11 @@ int main(int argc, char** argv) {
       		exit(1);
 	}
 
-    appLayer.fd = open(argv[1], O_RDWR | O_NOCTTY );
+	if(argc == 3){
+		defaultSettings();
+	}
+
+    appLayer.fd = open(lLayer.port, O_RDWR | O_NOCTTY );
 
     if (appLayer.fd <0) {perror(argv[1]); exit(-1); }
 
@@ -733,7 +724,7 @@ int main(int argc, char** argv) {
     }
 
     bzero(&newtio, sizeof(newtio));
-    newtio.c_cflag = BAUDRATE | CS8 | CLOCAL | CREAD;
+    newtio.c_cflag = lLayer.baudRate | CS8 | CLOCAL | CREAD;
     newtio.c_iflag = IGNPAR;
     newtio.c_oflag = 0;
 
@@ -779,7 +770,7 @@ int main(int argc, char** argv) {
 	} else{
 		receiver();
 	}
-
+	printf("Total bytes read from file: %d\n", totalRead);
     if ( tcsetattr(appLayer.fd,TCSANOW,&oldtio) == -1) {
 
       perror("tcsetattr");
