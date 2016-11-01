@@ -233,6 +233,9 @@ char *readMessage(int *size){
 		if(waitFlag == FALSE){
 	        if((res = read(appLayer.fd, &buf, 1)) > 0){
 	            status = readByte(buf, status);
+				if(status = 1){
+					msgLength = 0;
+				}
 				if(msgLength >= (*size)){
 					(*size) += 50;
 					msg = realloc(msg, (*size));
@@ -370,26 +373,33 @@ char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuff
 
 int sendIFrame(int fd, char *frame, int size){
 	char *msg;
-	while (STOP == FALSE && timeouts < 3) {
+	int msgSize;
+	while (STOP == FALSE && timeouts < lLayer.numTransmissions) {
+		tcflush(appLayer.fd, TCIOFLUSH);
 		int res = write(appLayer.fd, frame, size);
 		numI++;
 		printf("Wrote I frame with %d bytes to fd\n", res);
 		alarm(lLayer.timeout);
 
-		msg = readMessage(&size);
+		msg = readMessage(&msgSize);
 
 		if(msg != NULL){
-			if(analyse(msg) == (RR)){
-				//nr = nr^NR;
+
+			if((unsigned char)analyse(msg) == (RR | nr)){
+				nr = nr^NR;
+				ns = ns^NS;
 				resetTimer();
 				free(msg);
 				return 0;
 			}
-			else if(analyse(msg) == (REJ)){
+			else if((unsigned char)analyse(msg) == (REJ | nr)){
 				numRej++;
 			}
+
 		}
 	}
+
+
 	return -1;
 }
 
@@ -401,8 +411,7 @@ char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama ma
 
 	frame[0] = FLAG;
 	frame[1] = ADDRESS_SEND;
-	frame[2] = NS;
-	//ns = ns^NS;
+	frame[2] = ns;
 	frame[3] = frame[1]^frame[2];
 
 	switch (type) {
@@ -512,14 +521,12 @@ int llread(char *msg, int msgLength, int *pacSequence){
 	int type = dataDestuffed[0];
 
 	if(msg[2] != ns){
-		printf("Non sequential packet! NS = %d", ns);
+		printf("Non sequential packet! NS = %d\n", ns);
 		return -1;
-	} else {
-		ns = ns^NS;
 	}
 
 	if(type == DATA){
-		if(isDuplicate(dataDestuffed, pacSequence)){
+		if(isDuplicate(dataDestuffed, pacSequence) == TRUE){
 			return 0;
 		}
 	}
@@ -528,8 +535,8 @@ int llread(char *msg, int msgLength, int *pacSequence){
 		printf("Error confirming BCC2.\n");
 		return -1;
 	}
-
-
+	ns = ns ^ NS;
+	int size;
 	printf("Type: %x\n", type);
 	int size;
 	switch(type){
@@ -571,7 +578,8 @@ int llwrite(int fd){
 				break;
 			case DATA:
 				if(res == 0){
-					if(eof == TRUE){
+					printf("res deu 0 em data\n");
+						if(eof == TRUE){
 						type = END;
 						printf("Finished file transfer\n");
 					}
@@ -711,7 +719,8 @@ int receiver(){
 				break;
 			case TRANSFERING:
 
-				if((t=analyse(msg)) == NS){	//control for I frames
+				if((t=(unsigned char)analyse(msg)) == ns){	//control for I frames
+					//ns = ns ^ NS;
 					res = llread(msg, size, &pacSequence);
 					numI++;
 					if(res == 0){
@@ -735,7 +744,6 @@ int receiver(){
 					printf("OH MY GOD\n");
 				} else{
 					sendSUFrame(REJ | nr);
-					nr = nr^NR;
 				}
 				break;
 
@@ -812,7 +820,6 @@ int main(int argc, char** argv) {
 		defaultSettings();
 	} else if(argc == 7){
 		manualSettings(argv[3], argv[4], argv[5], argv[6]);
-		return 0;
 	}
 
     appLayer.fd = open(lLayer.port, O_RDWR | O_NOCTTY );
