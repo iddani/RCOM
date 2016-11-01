@@ -6,7 +6,6 @@ volatile int STOP=FALSE;
 volatile int waitFlag = TRUE;
 volatile int again = TRUE;
 unsigned int totalRead = 0;
-unsigned int frameSize = 108; //por isto depois de ler do user ou assim
 volatile int timeouts = 0;
 unsigned int ns = 0x00, nr = 0x00;
 unsigned int packetSeq = 0;
@@ -321,7 +320,7 @@ int sendIFrame(int fd, char *frame, int size){
 	while (STOP == FALSE && timeouts < 3) {
 		int res = write(appLayer.fd, frame, size);
 		printf("Wrote I frame with %d bytes to fd\n", res);
-		alarm(5);
+		alarm(lLayer.timeout);
 
 		msg = readMessage(&size);
 
@@ -384,16 +383,20 @@ char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama ma
 	return frame;
 }
 
-int readDataPacket(char *msg){
+int readDataPacket(char *msg, int *pacSequence){
     int fd = open(fileName, O_APPEND | O_WRONLY);
 
 	int sequenceNumber = msg[1];
 	printf("Sequence number %d\n", sequenceNumber);
-	if(sequenceNumber == 0){	//last sequence number
+	if(sequenceNumber != ((*pacSequence + 1) % 256)){	//last sequence number
+		if(sequenceNumber == (*pacSequence % 256)){
+			printf("asdasdasdasdadasdada\n");
+			return 0;
+		} else {
 
+		}
 	}
 	int nBytes = (unsigned char)msg[3] * 0x100 + (unsigned char)msg[2];
-
     int res;
     res = write(fd, &msg[4], nBytes);
 	total += res;
@@ -405,49 +408,40 @@ int readDataPacket(char *msg){
 int readControlPacket(char *msg, int *fileSize){
 	int size = 0, i;
 	char sizeBytes, nameBytes;
-    char *name = NULL;
-	switch(msg[1]){
-		case 0x00:	//type
-			sizeBytes = msg[2];
+	sizeBytes = msg[2];
 
-			for (i = 0; i < sizeBytes; i++) {
-                int expon= 1, j;
-			    for ( j = 0; j < i; j++) {
-                    expon *= 0x100;
-                }
-				size += ((unsigned char)msg[3+i] * expon);
-			}
-            printf("File size: %d\n", size);
-			nameBytes = msg[4+sizeBytes];
-            if(msg[0] == START){
-				fileName = malloc(nameBytes * sizeof(char));
-				memcpy(fileName, &msg[5+sizeBytes], nameBytes);
-                close(open(name, O_CREAT | O_TRUNC | O_WRONLY, 00644));
-			}
-			break;
-		case 0x01:	//name
-
-			nameBytes = msg[2];
-			name = malloc(nameBytes * sizeof(char));
-			memcpy(name, &msg[3], nameBytes);
-
-			sizeBytes = msg[3 + nameBytes];
-			for (i = 0; i < sizeBytes; i++) {
-				size += (msg[4+nameBytes+i] * 0x100^i);
-			}
-			break;
-        default:
-            printf("AAAAAAAAAAAAAALLLLLLLLLLLLLLLLLOOOOOOOOOOOOOO\n");
-            break;
+	for (i = 0; i < sizeBytes; i++) {
+        int expon= 1, j;
+	    for ( j = 0; j < i; j++) {
+            expon *= 0x100;
+        }
+		size += ((unsigned char)msg[3+i] * expon);
 	}
-    free(name);
+    printf("File size: %d\n", size);
+
+	nameBytes = msg[4+sizeBytes];
+    if(msg[0] == START){
+		fileName = malloc(nameBytes * sizeof(char));
+		memcpy(fileName, &msg[5+sizeBytes], nameBytes);
+        close(open(fileName, O_CREAT | O_TRUNC | O_WRONLY, 00644));
+	} else {
+		int fd = open(fileName, O_RDONLY);
+		struct stat s;
+		if (fstat(fd, &s) == -1) {
+	  		printf("fstat(%d) returned error=%d.", fd, errno);
+		}
+		if((int)s.st_size != size){
+			printf("Warning file size different from size in packet\n");
+		}
+		close(fd);
+	}
 	(*fileSize) = size;
 	return 0;
 }
 
-int readIFrame(char *msg, int msgLength){
+int llread(char *msg, int msgLength){
 	printf("Read %d bytes from serial port\n", msgLength);
-	int destuffedLength;
+	int destuffedLength, pacSequence = -1;
 	char *dataDestuffed = byteDestuffing(msg, msgLength, &destuffedLength);
 
 	if(checkBCC2(dataDestuffed, destuffedLength) == FALSE){
@@ -463,11 +457,10 @@ int readIFrame(char *msg, int msgLength){
 			readControlPacket(dataDestuffed, &size);
 			break;
 		case DATA:
-			readDataPacket(dataDestuffed);
+			readDataPacket(dataDestuffed, &pacSequence);
 			break;
 		case END:
 			readControlPacket(dataDestuffed, &size);
-
 			state = DISCONNECT;
 			break;
 		default:
@@ -516,21 +509,6 @@ int llwrite(int fd){
 	return 0;
 }
 
-int llread(){
-	/*
-	while (STOP == FALSE) {
-		int size;
-		char *msg = readIFrame(&size);
-
-		if(TRUE){	//sem erros detectados no cabeçalho e no campo de dados
-			char *destuffed = byteDestuffing(msg);
-			sendSUFrame(RR);
-		}
-	}*/
-	//readMessage()
-    return 0;
-}
-
 int llopen(){
 
 	int size = CONTROL_PCK_SIZE;
@@ -538,7 +516,6 @@ int llopen(){
 
 		STOP = FALSE;
 	    while (STOP == FALSE && timeouts < lLayer.numTransmissions) {
-			//again = TRUE;
 	        sendSUFrame(SET);
 	        alarm(lLayer.timeout);
 
@@ -613,6 +590,9 @@ int transfer(){
 				if(llopen()==0){
 					state = TRANSFERING;
 					printf("Setting up nice\n");
+				} else {
+					state = TERMINATE;
+					printf("Error setting up. Shutting down\n");
 				}
 				break;
 			case TRANSFERING:
@@ -651,7 +631,7 @@ int receiver(){
 			case TRANSFERING:
 
 				if((t=analyse(msg)) == NS){	//control for I frames
-					res = readIFrame(msg, size);
+					res = llread(msg, size);
 
 					if(res == 0){
 						sendSUFrame(RR);
@@ -686,12 +666,45 @@ void defaultSettings(){
 	lLayer.maxFrames = 350;
 }
 
+int manualSettings(char *baudRate, char *btf, char *retransmissions, char *timeout){
+	char *end;
+	lLayer.baudRate = strtoul(baudRate, &end, 16);
+	if(*end != '\0'){
+		printf("invalid value for BaudRate.\n");
+		exit(1);
+	}
+
+	lLayer.maxFrames = strtoul(btf, &end, 10);
+	if(*end != '\0' || lLayer.maxFrames < 1){
+		printf("invalid value for maxFrames.\n");
+		exit(1);
+	}
+	lLayer.numTransmissions = strtoul(retransmissions, &end, 10);
+	if(*end != '\0' || lLayer.numTransmissions < 1){
+		printf("invalid value for numTransmissions.\n");
+		exit(1);
+	}
+	lLayer.timeout = strtol(timeout, &end, 10);
+	if(lLayer.timeout < 1 || lLayer.timeout > 5000 || *end != '\0'){
+		printf("invalid value for timeout.\n");
+		exit(1);
+	}
+
+
+	printf("baudRate: %x\n", lLayer.baudRate);
+	printf("maxFrames: %d\n", lLayer.maxFrames);
+	printf("transmission: %d\n", lLayer.numTransmissions);
+	printf("timeout: %d\n", lLayer.timeout);
+
+}
+
 int main(int argc, char** argv) {
 
     if ( (argc < 3) ||
   	     ((strcmp("/dev/ttyS0", argv[1])!=0) &&
   	      (strcmp("/dev/ttyS1", argv[1])!=0) )) {
-      printf("Usage:\tnserial SerialPort ConnectionMode Ba\n\tex: nserial /dev/ttyS1 TRANSMITTER||RECEIVER\n");
+      printf("Default Usage:\tnserial SerialPort ConnectionMode\n\tex: nserial /dev/ttyS1 TRANSMITTER||RECEIVER\n");
+	  printf("Manual Usage:\tnserial SerialPort Filename ConnectionMode BaudRate BytesPerFrame NumTransmissions Timeout\n\tex: nserial /dev/ttyS1 pinguim.gif  TRANSMITTER||RECEIVER <int> <int> <int> <int>\n");
       exit(1);
   } else{
 	  sprintf(lLayer.port, "%s", argv[1]);
@@ -708,6 +721,9 @@ int main(int argc, char** argv) {
 
 	if(argc == 3){
 		defaultSettings();
+	} else if(argc == 7){
+		manualSettings(argv[3], argv[4], argv[5], argv[6]);
+		return 0;
 	}
 
     appLayer.fd = open(lLayer.port, O_RDWR | O_NOCTTY );
