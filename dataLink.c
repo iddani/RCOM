@@ -9,7 +9,6 @@ unsigned int totalRead = 0;
 volatile int timeouts = 0;
 unsigned int ns = 0x00, nr = 0x00;
 unsigned int packetSeq = 0;
-unsigned int numTrama = 0;
 unsigned int eof = FALSE;
 unsigned int numRej = 0, numTimeout = 0, numI = 0;
 char *fileName;
@@ -233,7 +232,7 @@ char *readMessage(int *size){
 		if(waitFlag == FALSE){
 	        if((res = read(appLayer.fd, &buf, 1)) > 0){
 	            status = readByte(buf, status);
-				if(status = 1){
+				if(status == 1){
 					msgLength = 0;
 				}
 				if(msgLength >= (*size)){
@@ -454,15 +453,15 @@ int readDataPacket(char *msg, int *pacSequence){
 
 	int sequenceNumber = msg[1];
 	printf("Sequence number %d\n", sequenceNumber);
-	if(sequenceNumber != ((*pacSequence + 1) % 256)){	//last sequence number
+	//if(sequenceNumber != ((*pacSequence + 1) % 256)){	//last sequence number
 
-	} else {
+	//} else {
 			int nBytes = (unsigned char)msg[3] * 0x100 + (unsigned char)msg[2];
 			int res;
 			res = write(fd, &msg[4], nBytes);
 			total += res;
 			printf("Wrote %d bytes to file\n", res);
-	}
+	//}
 	close(fd);
 	return 0;
 }
@@ -483,8 +482,9 @@ int readControlPacket(char *msg, int *fileSize){
 
 	nameBytes = msg[4+sizeBytes];
     if(msg[0] == START){
-		fileName = malloc(nameBytes * sizeof(char));
+		fileName = malloc((1+nameBytes) * sizeof(char));
 		memcpy(fileName, &msg[5+sizeBytes], nameBytes);
+		fileName[nameBytes] = '\0';
         close(open(fileName, O_CREAT | O_TRUNC | O_WRONLY, 00644));
 	} else {
 		int fd = open(fileName, O_RDONLY);
@@ -525,19 +525,16 @@ int llread(char *msg, int msgLength, int *pacSequence){
 		return -1;
 	}
 
-	if(type == DATA){
-		if(isDuplicate(dataDestuffed, pacSequence) == TRUE){
-			return 0;
-		}
+	if(type == DATA && (isDuplicate(dataDestuffed, pacSequence) == TRUE)){
+		return 0;
 	}
 
 	if(checkBCC2(dataDestuffed, destuffedLength) == FALSE){
 		printf("Error confirming BCC2.\n");
+		free(dataDestuffed);
 		return -1;
 	}
 	ns = ns ^ NS;
-	int size;
-	printf("Type: %x\n", type);
 	int size;
 	switch(type){
 		case START:
@@ -726,6 +723,7 @@ int receiver(){
 					if(res == 0){
 						sendSUFrame(RR | nr);
 						nr = nr^NR;
+						numI++;
 					} else {
 						sendSUFrame(REJ | nr);
 						numRej++;
@@ -735,6 +733,13 @@ int receiver(){
 					res = llclose();
 					state = BEGIN;
 					resetStatistics();
+				} else if (t == SET){
+					llopen();
+					ns = 0; nr = 0; totalRead = 0; total = 0; free(fileName);
+					resetStatistics();
+				} else{
+					sendSUFrame(REJ | nr);
+					numRej++;
 				}
 				break;
 			case DISCONNECT:
