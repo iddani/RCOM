@@ -157,10 +157,6 @@ char *createDataPacket(int fd){ //com data stuffed, flags nao stuffed e bcc sobr
 	char * packet = malloc(sizeof(char) * (lLayer.maxFrames + 4));
 	int num = 0;
 
-	/*char bcc = DATA ^ packetSeq;
-
-	byteStuffing(packet, &it, DATA);
-	byteStuffing(packet, &it, packetSeq++);*/
 	packet[0] = 1;
 	packet[1] = packetSeq++;
 	if(packetSeq > 255){
@@ -174,21 +170,10 @@ char *createDataPacket(int fd){ //com data stuffed, flags nao stuffed e bcc sobr
 	if(num < 2) nBytes[1] = 0;
 	packet[3] = nBytes[1];
 
-	//bcc = bcc  ^ nBytes[0] ^ nBytes[1];
 	free(nBytes);
-
-	/*if((lLayer.maxFrames * 2) < (4+(*length))){
-		packet = realloc(packet, 20+(*length));
-	}*/
-
 	memcpy(&packet[4], data, lLayer.maxFrames);
-	/*it += (*length);
-	byteStuffing(packet,&it, bcc);
-	packet[it] = FLAG;*/
 	free(data);
-	//(*length) = it;
 	return packet;
-
 }
 
 int readDataPacket(char *msg, int *pacSequence){
@@ -219,7 +204,7 @@ int readControlPacket(char *msg, int *fileSize){
 	    for ( j = 0; j < i; j++) {
             expon *= 0x100;
         }
-		size += ((char)msg[3+i] * expon);
+		size += ((unsigned char)msg[3+i] * expon);
 	}
     printf("File size: %d\n", size);
 
@@ -467,11 +452,9 @@ int llread(char *msg, int msgLength, int *pacSequence){
 		printf("Non sequential packet! NS = %d\n", ns);
 		return -1;
 	}
-
 	if(type == DATA && (isDuplicate(dataDestuffed, pacSequence) == TRUE)){
 		return 0;
 	}
-
 	if(checkBCC2(dataDestuffed, destuffedLength) == FALSE){
 		printf("Error confirming BCC2.\n");
 		free(dataDestuffed);
@@ -647,7 +630,6 @@ int transfer(){
 	printf("Read total of %d from file: %s\n", total, fileName);
 	printf("Sent %d I frames and received %d rejections. Timedout %d times\n", numI, numRej, numTimeout);
 
-	free(fileName);
 	close(fd);
     return 0;
 }
@@ -878,6 +860,7 @@ int main(int argc, char** argv) {
       exit(-1);
     }
 
+	free(fileName);
     close(appLayer.fd);
     return 0;
 }
