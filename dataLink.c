@@ -9,6 +9,7 @@ unsigned int packetSeq = 0;
 unsigned int eof = FALSE;
 unsigned int numRej = 0, numTimeout = 0, numI = 0, total = 0;;
 char *fileName;
+unsigned int fileSize;
 struct applicationLayer appLayer;
 struct linkLayer lLayer;
 State state;
@@ -178,7 +179,7 @@ char *createDataPacket(int fd){ //com data stuffed, flags nao stuffed e bcc sobr
 int readDataPacket(char *msg, int *pacSequence){
     int fd = open(fileName, O_APPEND | O_WRONLY);
 
-	int sequenceNumber = msg[1];
+	int sequenceNumber = (unsigned char)msg[1];
 	printf("Sequence number %d\n", (unsigned int)sequenceNumber);
 	//if(sequenceNumber != ((*pacSequence + 1) % 256)){	//last sequence number
 
@@ -187,13 +188,14 @@ int readDataPacket(char *msg, int *pacSequence){
 			int res;
 			res = write(fd, &msg[4], nBytes);
 			total += res;
-			printf("Wrote %d bytes to file\n", res);
+
+			printf("Wrote %d bytes to file. (%d%%)\n", res, (total* 100)/fileSize);
 	//}
 	close(fd);
 	return 0;
 }
 
-int readControlPacket(char *msg, int *fileSize){
+int readControlPacket(char *msg){
 	int size = 0, i;
 	char sizeBytes, nameBytes;
 	sizeBytes = msg[2];
@@ -224,7 +226,7 @@ int readControlPacket(char *msg, int *fileSize){
 		}
 		close(fd);
 	}
-	(*fileSize) = size;
+	fileSize = size;
 	return 0;
 }
 
@@ -387,6 +389,8 @@ int sendIFrame(int fd, char *frame, int size){
 				ns = ns^NS;
 				resetTimer();
 				free(msg);
+		//		printf("total %d filesize %d", total, fileSize);
+				//printf("Sent %d bytes to serial port. (%d%%)\n", res, (total* 100)/fileSize);
 				return 0;
 			}
 			else if((unsigned char)analyse(msg) == (REJ | nr)){
@@ -457,17 +461,17 @@ int llread(char *msg, int msgLength, int *pacSequence){
 		free(dataDestuffed);
 		return -1;
 	}
-	int size;
+
 	switch(type){
 		case START:
-			readControlPacket(dataDestuffed, &size);
+			readControlPacket(dataDestuffed);
 			break;
 		case DATA:
 			readDataPacket(dataDestuffed, pacSequence);
 			(*pacSequence)++;
 			break;
 		case END:
-			readControlPacket(dataDestuffed, &size);
+			readControlPacket(dataDestuffed);
 			state = DISCONNECT;
 			break;
 		default:
