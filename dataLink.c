@@ -100,9 +100,8 @@ char *makePayload(int fd){ //BCC2 + Stuffing
 			printf("Error reading from file:  %d\n", errno);
 			return NULL;
 		}
-		//(*bcc) = (*bcc)^byte;
-		//byteStuffing(data, it, byte);
-		i++;
+		data[i++] = byte;
+
 
 	} while(i < lLayer.maxFrames);
 
@@ -180,7 +179,7 @@ int readDataPacket(char *msg, int *pacSequence){
     int fd = open(fileName, O_APPEND | O_WRONLY);
 
 	int sequenceNumber = msg[1];
-	printf("Sequence number %d\n", sequenceNumber);
+	printf("Sequence number %d\n", (unsigned int)sequenceNumber);
 	//if(sequenceNumber != ((*pacSequence + 1) % 256)){	//last sequence number
 
 	//} else {
@@ -260,15 +259,14 @@ char *byteStuffing(char *data, int msgLength, int *stuffedLength){
 	char *stuffed = malloc(sizeof(char) * (msgLength)*2);
 	int i, it = 0;
 	for ( i = 0; i < msgLength; i++) {
-		char byte = data[i];
-		if(byte == FLAG){
+		if(data[i] == FLAG){
 			stuffed[it] = 0x7D;
 			stuffed[++it] = 0x5E;
-		} else if (byte == 0x7D){
+		} else if (data[i] == 0x7D){
 			stuffed[it] = 0x7D;
 			stuffed[++it] = 0x5D;
 		} else{
-			stuffed[it] = byte;
+			stuffed[it] = data[i];
 		}
 		it++;
 	}
@@ -443,7 +441,6 @@ char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama ma
 }
 
 int llread(char *msg, int msgLength, int *pacSequence){
-	printf("Read %d bytes from serial port\n", msgLength);
 	int destuffedLength;
 	char *dataDestuffed = byteDestuffing(msg, msgLength, &destuffedLength);
 	int type = dataDestuffed[0];
