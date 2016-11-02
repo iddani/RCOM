@@ -5,19 +5,16 @@
 volatile int STOP=FALSE;
 volatile int waitFlag = TRUE;
 volatile int again = TRUE;
-unsigned int totalRead = 0;
 volatile int timeouts = 0;
 unsigned int ns = 0x00, nr = 0x00;
 unsigned int packetSeq = 0;
 unsigned int eof = FALSE;
 unsigned int numRej = 0, numTimeout = 0, numI = 0;
 char *fileName;
-struct termios oldtio,newtio;
 struct applicationLayer appLayer;
 struct linkLayer lLayer;
 int total =0;
 State state;
-
 
 void signalHandlerIO(int status){
 
@@ -25,6 +22,7 @@ void signalHandlerIO(int status){
 }
 
 void alarmHandler(int signo) {
+	numTimeout++;
     timeouts++;
     printf("timeouts: %d\n", timeouts);
     again = FALSE;
@@ -37,53 +35,6 @@ void resetTimer(){
 
 void resetStatistics(){
 	numRej = 0; numTimeout = 0; numI = 0;
-}
-
-int checkBaudRate(int input){
-	switch (input){
-		case 110:
-			return 0xB110;
-		case 300:
-			return 0xB300;
-		case 600:
-			return 0xB600;
-		case 1200:
-			return 0xB1200;
-		case 2400:
-			return 0xB2400;
-		case 4800:
-			return 0xB4800;
-		case 9600:
-			return 0xB9600;
-		case 14400:
-			return 0xB14400;
-		case 19200:
-			return 0xB19200;
-		case 28800:
-			return 0xB28800;
-		case 38400:
-			return 0xB38400;
-		case 56000:
-			return 0xB56000;
-		case 57600:
-			return 0xB57600;
-		case 115200:
-			return 0xB115200;
-		case 128000:
-			return 0xB128000;
-		case 153600:
-			return 0xB153600;
-		case 230400:
-			return 0xB230400;
-		case 256000:
-			return 0xB256000;
-		case 460800:
-			return 0xB460800;
-		case 9216600:
-			return 0xB9216600;
-		default:
-			return -1;
-	}
 }
 
 char getBCC2(char *packet, int length){		//descobre o bcc2 pra retornar
@@ -135,11 +86,9 @@ void byteStuffing(char *data, int *it, char byte){
 	if(byte == FLAG){
 		data[*it] = 0x7D;
 		data[++(*it)] = 0x5E;
-		printf("STUFFEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdd %d\n", (*it));
 	} else if (byte == 0x7D){
 		data[*it] = 0x7D;
 		data[++(*it)] = 0x5D;
-		printf("STUFFEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdd %d\n", (*it));
 	} else{
 		data[*it] = byte;
 	}
@@ -194,10 +143,9 @@ int createSUFrame(char type, char *frame){
 
 int sendSUFrame(char type){
 
-	int res = 0;
 	char frame[SU_FRAME_SIZE];
 	createSUFrame(type, frame);
-	res = write(appLayer.fd, frame, SU_FRAME_SIZE);
+	write(appLayer.fd, frame, SU_FRAME_SIZE);
     return 0;
 }
 
@@ -222,7 +170,6 @@ char *readMessage(int *size){
     int res;
 
     again = TRUE;
-	//waitFlag = TRUE;
     char *msg = malloc(sizeof(char) *(*size));
 
     while(again == TRUE){
@@ -248,13 +195,11 @@ char *readMessage(int *size){
 						(*size) = msgLength;
 	                    return msg;
 	                }else {
-						printf("error in read msg\n");
 						msgLength = 0;
 						status = 0;
 					}
 	            }
 	        } else if (res == 0) {
-				printf("Res deu 0!\n" );
 				waitFlag = TRUE;
 			}
 	   	}
@@ -273,11 +218,10 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 		if(res == 0) {
 			eof = TRUE;
 			lLayer.maxFrames = i;
-			printf("packet: %d\n", lLayer.maxFrames);
 			break;
 		}
 		else if(res < 0){
-			printf("Error reading from gif no %d\n", errno);
+			printf("Error reading from file:  %d\n", errno);
 			return NULL;
 		}
 		(*bcc) = (*bcc)^byte;
@@ -286,7 +230,7 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 
 	} while(i < lLayer.maxFrames);
 
-	totalRead += i;
+	total += i;
     return data;
 }
 
@@ -313,13 +257,13 @@ char *createControlPacket(int fd, int type, int *pacLength){
 	memcpy(&packet[3], codedSize, nBytes);
 	packet[3 + nBytes] = 0x01;		//type -> name
 
-	int nameLength = strlen("pinguim.gif");
+	int nameLength = strlen(fileName);
 	if((*pacLength) < ((*pacLength) + nameLength - 1)){
 		(*pacLength) += nameLength - 1;
 		packet = realloc(packet, (*pacLength));
 	}
 	packet[4 + nBytes] = nameLength;		//number of bytes
-	memcpy(&(packet[5 + nBytes]), "pinguim.gif", nameLength);
+	memcpy(&(packet[5 + nBytes]), fileName, nameLength);
 
 	char bcc = getBCC2(packet, (*pacLength));
 
@@ -365,7 +309,6 @@ char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuff
 	packet[it] = FLAG;
 	free(stuffed);
 	(*length) = it;
-	printf("%x\n", (unsigned char)packet[17]);
 	return packet;
 
 }
@@ -375,15 +318,12 @@ int sendIFrame(int fd, char *frame, int size){
 	int msgSize;
 	while (STOP == FALSE && timeouts < lLayer.numTransmissions) {
 		tcflush(appLayer.fd, TCIOFLUSH);
-		int res = write(appLayer.fd, frame, size);
+		write(appLayer.fd, frame, size);
 		numI++;
-		printf("Wrote I frame with %d bytes to fd\n", res);
 		alarm(lLayer.timeout);
 
 		msg = readMessage(&msgSize);
-
 		if(msg != NULL){
-
 			if((unsigned char)analyse(msg) == (RR | nr)){
 				nr = nr^NR;
 				ns = ns^NS;
@@ -476,7 +416,7 @@ int readControlPacket(char *msg, int *fileSize){
 	    for ( j = 0; j < i; j++) {
             expon *= 0x100;
         }
-		size += ((unsigned char)msg[3+i] * expon);
+		size += ((char)msg[3+i] * expon);
 	}
     printf("File size: %d\n", size);
 
@@ -502,15 +442,11 @@ int readControlPacket(char *msg, int *fileSize){
 }
 
 int isDuplicate(char *msg,int *pacSequence){
-
 	int sequenceNumber = msg[1];
-	printf("Sequence number %d\n", sequenceNumber);
-
 	if(sequenceNumber == (*pacSequence % 256)){
 		printf("Found duplicate: %d", sequenceNumber);
 		return TRUE;
 	}
-
 	return FALSE;
 }
 
@@ -575,10 +511,9 @@ int llwrite(int fd){
 				break;
 			case DATA:
 				if(res == 0){
-					printf("res deu 0 em data\n");
-						if(eof == TRUE){
-						type = END;
-						printf("Finished file transfer\n");
+					if(eof == TRUE){
+					type = END;
+					printf("Finished file transfer\n");
 					}
 				}
 				break;
@@ -590,7 +525,6 @@ int llwrite(int fd){
 				break;
 		}
 		free(frame);
-
 	}
 	return 0;
 }
@@ -629,7 +563,7 @@ int llopen(){
 int llclose(){
 	char *msg;
 	STOP = FALSE;
-	int size;
+	int size = 20;
     if(appLayer.transmission == TRANSMITTER){
 
 	    while(STOP == FALSE && timeouts < lLayer.numTransmissions){
@@ -665,17 +599,14 @@ int llclose(){
 /*  Envio de informacao do lado do emissor*/
 int transfer(){
 
-    int fd = open("pinguim.gif", O_RDONLY);
-    if(fd < 0){
-    	printf("Error opening file. Error: %d\n", fd);
-		exit(1);
-    }
+    int fd = open(fileName, O_RDONLY);
+
 	while(state != TERMINATE){
 	    switch(state){
 			case BEGIN:
 				if(llopen()==0){
 					state = TRANSFERING;
-					printf("Setting up nice\n");
+					printf("Setting up\n");
 				} else {
 					state = TERMINATE;
 					printf("Error setting up. Shutting down\n");
@@ -683,12 +614,12 @@ int transfer(){
 				break;
 			case TRANSFERING:
 				llwrite(fd);
-				printf("Transfered yeah\n");
+				printf("Transfered the file successfully\n");
 				state = DISCONNECT;
 				break;
 			case DISCONNECT:
 				llclose();
-				printf("disconnected ouiiiiii\n");
+				printf("Disconnected\n");
 				state = TERMINATE;
 				break;
 
@@ -696,6 +627,7 @@ int transfer(){
 				break;
 		}
 	}
+	free(fileName);
     close(fd);
     return 0;
 }
@@ -719,7 +651,6 @@ int receiver(){
 				if((t=(unsigned char)analyse(msg)) == ns){	//control for I frames
 					//ns = ns ^ NS;
 					res = llread(msg, size, &pacSequence);
-					numI++;
 					if(res == 0){
 						sendSUFrame(RR | nr);
 						nr = nr^NR;
@@ -735,7 +666,7 @@ int receiver(){
 					resetStatistics();
 				} else if (t == SET){
 					llopen();
-					ns = 0; nr = 0; totalRead = 0; total = 0; free(fileName);
+					ns = 0; nr = 0; total = 0; total = 0; free(fileName);
 					resetStatistics();
 				} else{
 					sendSUFrame(REJ | nr);
@@ -801,30 +732,57 @@ void manualSettings(char *baudRate, char *btf, char *retransmissions, char *time
 }
 
 int main(int argc, char** argv) {
-
-    if ( (argc < 3) ||
+	struct termios oldtio,newtio;
+    if( (argc < 3) ||
   	     ((strcmp("/dev/ttyS0", argv[1])!=0) &&
   	      (strcmp("/dev/ttyS1", argv[1])!=0) )) {
-      printf("Default Usage:\tnserial SerialPort ConnectionMode\n\tex: nserial /dev/ttyS1 TRANSMITTER||RECEIVER\n");
-	  printf("Manual Usage:\tnserial SerialPort Filename ConnectionMode BaudRate BytesPerFrame NumTransmissions Timeout\n\tex: nserial /dev/ttyS1 pinguim.gif  TRANSMITTER||RECEIVER <int> <int> <int> <int>\n");
-      exit(1);
-  } else{
-	  sprintf(lLayer.port, "%s", argv[1]);
-  }
+			  printf("Default Usage:\tnserial SerialPort ConnectionMode (FileName) \n\tex: nserial /dev/ttyS1 TRANSMITTER pinguim.gif\n\tex: nserial /dev/ttyS1 RECEIVER\n");
+				printf("Manual Usage:\tnserial SerialPort ConnectionMode (Filename) BaudRate (BytesPerFrame) (NumTransmissions) (Timeout)\n\tex: nserial /dev/ttyS1 TRANSMITTER pinguim.gif 38400 250 3 3\n\tex: nserial /dev/ttyS1 RECEIVER 38400\n");
+			exit(1);
+	} else{
+		sprintf(lLayer.port, "%s", argv[1]);
+	}
 
     if(strcmp("TRANSMITTER", argv[2])==0){
     	appLayer.transmission = TRANSMITTER;
+
+		if(argc == 4){
+			if(checkFile(argv[3]) == -1){
+				exit(1);
+			}
+
+			fileName = malloc(sizeof(char) * (strlen(argv[3])+1));
+			sprintf(fileName, "%s", argv[3]);
+			defaultSettings();
+		} else if(argc == 8){
+			if(checkFile(argv[3]) == -1){
+				exit(1);
+			}
+			manualSettings(argv[4], argv[5], argv[6], argv[7]);
+		} else{
+			printf("Wrong number of arguments for %s\n", argv[2]);
+			exit(1);
+		}
+
 	} else if(strcmp("RECEIVER", argv[2])==0){
+
 		appLayer.transmission = RECEIVER;
+		if(argc == 3){
+			defaultSettings();
+		} else if(argc == 4){
+			char *end;
+			lLayer.baudRate = checkBaudRate(strtoul(argv[3], &end, 10));
+			if(*end != '\0' || lLayer.baudRate < 0){
+				printf("invalid value for BaudRate.\n");
+				exit(1);
+			}
+		} else{
+			printf("Wrong number of arguments for %s\n", argv[2]);
+			exit(1);
+		}
 	} else{
 		printf("ConnectionMode not recognized\n\tuse: TRANSMITTER||RECEIVER\n");
-      		exit(1);
-	}
-
-	if(argc == 3){
-		defaultSettings();
-	} else if(argc == 7){
-		manualSettings(argv[3], argv[4], argv[5], argv[6]);
+      	exit(1);
 	}
 
     appLayer.fd = open(lLayer.port, O_RDWR | O_NOCTTY );
@@ -887,7 +845,7 @@ int main(int argc, char** argv) {
 	} else{
 		receiver();
 	}
-	printf("Total bytes read from file: %d\n", totalRead);
+	printf("Total bytes read from file: %d\n", total);
     if ( tcsetattr(appLayer.fd,TCSANOW,&oldtio) == -1) {
 
       perror("tcsetattr");

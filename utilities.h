@@ -10,7 +10,6 @@
 #include <pthread.h>
 #include <unistd.h>
 
-#define BAUDRATE 		B38400
 #define MODEMDEVICE 	"/dev/ttyS1"
 #define _POSIX_SOURCE 		1 /* POSIX compliant source */
 #define FALSE 				0
@@ -28,19 +27,12 @@
 #define NS 				0x40
 #define NR 				0x80
 
-#define I_CTRL_DATA			0x01
-#define I_CTRL_START		0x02
-#define I_CTRL_END			0x03
-
 #define SU_FRAME_SIZE		5
 #define CONTROL_PCK_SIZE	10
 
 #define DATA				1
 #define START				2
 #define END					3
-
-
-
 
 typedef enum{
 	TRANSMITTER, RECEIVER
@@ -64,3 +56,6 @@ struct linkLayer {
 	char frame[20];			/*Trama*/
 	unsigned int maxFrames;			/*numero de frames enviados em cada packet*/
 };
+
+int checkFile(char *fileName);
+int checkBaudRate(int input);
