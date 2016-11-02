@@ -1,19 +1,16 @@
-/*Non-Canonical Input Processing*/
-#include <math.h>
 #include "utilities.h"
 
-volatile int STOP=FALSE;
+volatile int STOP = FALSE;
 volatile int waitFlag = TRUE;
 volatile int again = TRUE;
 volatile int timeouts = 0;
 unsigned int ns = 0x00, nr = 0x00;
 unsigned int packetSeq = 0;
 unsigned int eof = FALSE;
-unsigned int numRej = 0, numTimeout = 0, numI = 0;
+unsigned int numRej = 0, numTimeout = 0, numI = 0, total = 0;;
 char *fileName;
 struct applicationLayer appLayer;
 struct linkLayer lLayer;
-int total =0;
 State state;
 
 void signalHandlerIO(int status){
@@ -37,9 +34,37 @@ void resetStatistics(){
 	numRej = 0; numTimeout = 0; numI = 0;
 }
 
+/*
+	======================= applicationLayer ==========================
+*/
+
+char *codeFileSize(int fileSize, int *num){
+	int nBytes = 4, rem, iterator = 0;
+	char *size = malloc(sizeof(char) * nBytes);
+
+	do {
+		rem = fileSize % 0x100;
+		fileSize /= 0x100;
+		if(rem > 0){
+			size[(*num)++] = (unsigned char)rem;
+		}
+		iterator++;
+	} while(rem > 0);
+	return size;
+}
+
+int isDuplicate(char *msg,int *pacSequence){
+	int sequenceNumber = msg[1];
+	if(sequenceNumber == (*pacSequence % 256)){
+		printf("Found duplicate: %d", sequenceNumber);
+		return TRUE;
+	}
+	return FALSE;
+}
+
 char getBCC2(char *packet, int length){		//descobre o bcc2 pra retornar
 	int i;
-	char bcc;
+	char bcc = 0x00;
 	for (i = 0; i < (length); i++) {
 			bcc = bcc ^ packet[i];
 	}
@@ -59,157 +84,8 @@ int checkBCC2(char *packet, int length){	//inclui o bcc2 no packet
 	}
 }
 
-int readByte(char byte, int status){
-	switch(status){
-		case 0:
-			if(byte == FLAG){
-				return 1;
-			} else return 0;
-			break;
-
-		case 1:
-			if(byte != FLAG){
-				return 2;
-			} else return 1;
-
-			break;
-		case 2:
-			if(byte == FLAG){
-				return 3;
-			} else return 2;
-			break;
-	}
-    return -1;
-}
-
-void byteStuffing(char *data, int *it, char byte){
-	if(byte == FLAG){
-		data[*it] = 0x7D;
-		data[++(*it)] = 0x5E;
-	} else if (byte == 0x7D){
-		data[*it] = 0x7D;
-		data[++(*it)] = 0x5D;
-	} else{
-		data[*it] = byte;
-	}
-	(*it)++;
-}
-
-char * byteDestuffing(char *data, int msgLength, int * destuffedLength){
-	char * destuffed = malloc(sizeof(char) * msgLength);
-	int i = 4, j = 0;
-	while(data[i] != FLAG){
-		if(data[i] == 0x7D && data[i+1] == 0x5E){
-			destuffed[j++] = 0x7E;
-			i+=2;
-		} else if(data[i] == 0x7D && data[i+1] == 0x5D){
-			destuffed[j++] = 0x7D;
-			i+=2;
-		} else {
-			destuffed[j++] = data[i++];
-		}
-	}
-	(*destuffedLength) = j;
-	return destuffed;
-}
-
-char analyse(char msg[]){
-
-	char address = msg[1], control = msg[2], bcc = msg[3];
-	if(bcc != (address^control)){
-		return -1;
-	} else {
-		return control;
-	}
-}
-
-int createSUFrame(char type, char *frame){
-
-	frame[0] = FLAG;
-	switch(appLayer.transmission){
-		case TRANSMITTER:
-			frame[1] = ADDRESS_SEND;
-			break;
-		case RECEIVER:
-			frame[1] = ADDRESS_SEND;
-			break;
-	}
-
-	frame[2] = type;
-    frame[3] = (frame[1]^frame[2]);
-    frame[4] = FLAG;
-	return 0;
-}
-
-int sendSUFrame(char type){
-
-	char frame[SU_FRAME_SIZE];
-	createSUFrame(type, frame);
-	write(appLayer.fd, frame, SU_FRAME_SIZE);
-    return 0;
-}
-
-char *codeFileSize(int fileSize, int *num){
-	int nBytes = 4, rem, iterator = 0;
-	char *size = malloc(sizeof(char) * nBytes);
-
-	do {
-		rem = fileSize % 0x100;
-		fileSize /= 0x100;
-		if(rem > 0){
-			size[(*num)++] = (unsigned char)rem;
-		}
-		iterator++;
-	} while(rem > 0);
-	return size;
-}
-
-char *readMessage(int *size){
-    char buf;
-	int msgLength = 0, status = 0;
-    int res;
-
-    again = TRUE;
-    char *msg = malloc(sizeof(char) *(*size));
-
-    while(again == TRUE){
-
-		//if(waitFlag == TRUE)
-    	//	write(1, ".", 1); usleep(100000);
-		if(waitFlag == FALSE){
-	        if((res = read(appLayer.fd, &buf, 1)) > 0){
-	            status = readByte(buf, status);
-				if(status == 1){
-					msgLength = 0;
-				}
-				if(msgLength >= (*size)){
-					(*size) += 50;
-					msg = realloc(msg, (*size));
-				}
-	            msg[msgLength] = buf;
-	            msgLength++;
-
-	            if(status == 3){
-	                if(msg[3] == (msg[1]^msg[2]) ){
-	                	again = FALSE;
-						(*size) = msgLength;
-	                    return msg;
-	                }else {
-						msgLength = 0;
-						status = 0;
-					}
-	            }
-	        } else if (res == 0) {
-				waitFlag = TRUE;
-			}
-	   	}
-    }
-	numTimeout++;
-    return NULL;
-}
-
-char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
-	char *data = malloc(sizeof(char) * lLayer.maxFrames * 2);
+char *makePayload(int fd){ //BCC2 + Stuffing
+	char *data = malloc(sizeof(char) * lLayer.maxFrames);
  	int res, i = 0;
 
 	do {
@@ -224,8 +100,8 @@ char *makePayload(int fd, char *bcc, int *it){ //BCC2 + Stuffing
 			printf("Error reading from file:  %d\n", errno);
 			return NULL;
 		}
-		(*bcc) = (*bcc)^byte;
-		byteStuffing(data, it, byte);
+		//(*bcc) = (*bcc)^byte;
+		//byteStuffing(data, it, byte);
 		i++;
 
 	} while(i < lLayer.maxFrames);
@@ -276,116 +152,43 @@ char *createControlPacket(int fd, int type, int *pacLength){
 	return packet;
 }
 
-char *createDataPacket(int fd, int *length){ //com data stuffed, flags nao stuffed e bcc sobre isso
+char *createDataPacket(int fd){ //com data stuffed, flags nao stuffed e bcc sobre isso
 
-	char * packet = malloc(sizeof(char) * lLayer.maxFrames * 2);
-	int it =0;
+	char * packet = malloc(sizeof(char) * (lLayer.maxFrames + 4));
 	int num = 0;
 
-	char bcc = DATA ^ packetSeq;
+	/*char bcc = DATA ^ packetSeq;
 
 	byteStuffing(packet, &it, DATA);
-	byteStuffing(packet, &it, packetSeq++);
+	byteStuffing(packet, &it, packetSeq++);*/
+	packet[0] = 1;
+	packet[1] = packetSeq++;
 	if(packetSeq > 255){
 		packetSeq = 0;
 	}
 
-	char *stuffed = makePayload(fd, &bcc, length);
+	char *data = makePayload(fd);
 	char * nBytes = codeFileSize(lLayer.maxFrames, &num);
-	byteStuffing(packet, &it, nBytes[0]);
-	if(num < 2) nBytes[1] = 0;
-	byteStuffing(packet, &it, nBytes[1]);
 
-	bcc = bcc  ^ nBytes[0] ^ nBytes[1];
+	packet[2] = nBytes[0];
+	if(num < 2) nBytes[1] = 0;
+	packet[3] = nBytes[1];
+
+	//bcc = bcc  ^ nBytes[0] ^ nBytes[1];
 	free(nBytes);
 
-	if((lLayer.maxFrames * 2) < (4+(*length))){
+	/*if((lLayer.maxFrames * 2) < (4+(*length))){
 		packet = realloc(packet, 20+(*length));
-	}
+	}*/
 
-	memcpy(&packet[it], stuffed, *length);
-	it += (*length);
+	memcpy(&packet[4], data, lLayer.maxFrames);
+	/*it += (*length);
 	byteStuffing(packet,&it, bcc);
-	packet[it] = FLAG;
-	free(stuffed);
-	(*length) = it;
+	packet[it] = FLAG;*/
+	free(data);
+	//(*length) = it;
 	return packet;
 
-}
-
-int sendIFrame(int fd, char *frame, int size){
-	char *msg;
-	int msgSize;
-	while (STOP == FALSE && timeouts < lLayer.numTransmissions) {
-		tcflush(appLayer.fd, TCIOFLUSH);
-		write(appLayer.fd, frame, size);
-		numI++;
-		alarm(lLayer.timeout);
-
-		msg = readMessage(&msgSize);
-		if(msg != NULL){
-			if((unsigned char)analyse(msg) == (RR | nr)){
-				nr = nr^NR;
-				ns = ns^NS;
-				resetTimer();
-				free(msg);
-				return 0;
-			}
-			else if((unsigned char)analyse(msg) == (REJ | nr)){
-				numRej++;
-			}
-
-		}
-	}
-
-
-	return -1;
-}
-
-char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama makeplayload
-
-	char *frame = malloc(sizeof(char) * 20);
-	char *packet, *stuffed;
-	int length = 7;
-
-	frame[0] = FLAG;
-	frame[1] = ADDRESS_SEND;
-	frame[2] = ns;
-	frame[3] = frame[1]^frame[2];
-
-	switch (type) {
-		case START:
-		case END:
-			packet = createControlPacket(fd, type, &length);	//contem ja bcc
-			stuffed = malloc(sizeof(char) * length * 2);
-
-			int i = 0, j = 0;
-			while(j < length){
-				byteStuffing(stuffed, &i, packet[j++]);
-			}
-			free(packet);
-
-			length = i;
-			if(20 < (5+length)){
-				frame = realloc(frame, 5+length);
-			}
-			memcpy(&frame[4], stuffed, length);
-			break;
-
-		case DATA:
-			length = 0;
-			stuffed = createDataPacket(fd, &length);
-			if(20 < (5+length)){
-				frame = realloc(frame, 6+length);
-			}
-			memcpy(&frame[4], stuffed, length);
-			break;
-	}
-	frame[4+length] = FLAG;
-	free(stuffed);
-	(*frameSize) = (5+length);
-
-	return frame;
 }
 
 int readDataPacket(char *msg, int *pacSequence){
@@ -441,13 +244,217 @@ int readControlPacket(char *msg, int *fileSize){
 	return 0;
 }
 
-int isDuplicate(char *msg,int *pacSequence){
-	int sequenceNumber = msg[1];
-	if(sequenceNumber == (*pacSequence % 256)){
-		printf("Found duplicate: %d", sequenceNumber);
-		return TRUE;
+/*
+  	======================= linkLayer ================================
+*/
+
+int readByte(char byte, int status){
+	switch(status){
+		case 0:
+			if(byte == FLAG){
+				return 1;
+			} else return 0;
+			break;
+
+		case 1:
+			if(byte != FLAG){
+				return 2;
+			} else return 1;
+
+			break;
+		case 2:
+			if(byte == FLAG){
+				return 3;
+			} else return 2;
+			break;
 	}
-	return FALSE;
+    return -1;
+}
+
+char *byteStuffing(char *data, int msgLength, int *stuffedLength){
+	char *stuffed = malloc(sizeof(char) * (msgLength)*2);
+	int i, it = 0;
+	for ( i = 0; i < msgLength; i++) {
+		char byte = data[i];
+		if(byte == FLAG){
+			stuffed[it] = 0x7D;
+			stuffed[++it] = 0x5E;
+		} else if (byte == 0x7D){
+			stuffed[it] = 0x7D;
+			stuffed[++it] = 0x5D;
+		} else{
+			stuffed[it] = byte;
+		}
+		it++;
+	}
+	(*stuffedLength) = it;
+	return stuffed;
+
+}
+
+char * byteDestuffing(char *data, int msgLength, int *destuffedLength){
+	char * destuffed = malloc(sizeof(char) * msgLength);
+	int i = 4, j = 0;
+	while(data[i] != FLAG){
+		if(data[i] == 0x7D && data[i+1] == 0x5E){
+			destuffed[j++] = 0x7E;
+			i+=2;
+		} else if(data[i] == 0x7D && data[i+1] == 0x5D){
+			destuffed[j++] = 0x7D;
+			i+=2;
+		} else {
+			destuffed[j++] = data[i++];
+		}
+	}
+	(*destuffedLength) = j;
+	return destuffed;
+}
+
+char analyse(char msg[]){
+
+	char address = msg[1], control = msg[2], bcc = msg[3];
+	if(bcc != (address^control)){
+		return -1;
+	} else {
+		return control;
+	}
+}
+
+int createSUFrame(char type, char *frame){
+
+	frame[0] = FLAG;
+	switch(appLayer.transmission){
+		case TRANSMITTER:
+			frame[1] = ADDRESS_SEND;
+			break;
+		case RECEIVER:
+			frame[1] = ADDRESS_SEND;
+			break;
+	}
+
+	frame[2] = type;
+    frame[3] = (frame[1]^frame[2]);
+    frame[4] = FLAG;
+	return 0;
+}
+
+int sendSUFrame(char type){
+
+	char frame[SU_FRAME_SIZE];
+	createSUFrame(type, frame);
+	write(appLayer.fd, frame, SU_FRAME_SIZE);
+    return 0;
+}
+
+char *readMessage(int *size){
+    char buf;
+	int msgLength = 0, status = 0;
+    int res;
+
+    again = TRUE;
+    char *msg = malloc(sizeof(char) *(*size));
+
+    while(again == TRUE){
+
+		if(waitFlag == FALSE){
+	        if((res = read(appLayer.fd, &buf, 1)) > 0){
+	            status = readByte(buf, status);
+				if(status == 1){
+					msgLength = 0;
+				}
+				if(msgLength >= (*size)){
+					(*size) += 50;
+					msg = realloc(msg, (*size));
+				}
+	            msg[msgLength] = buf;
+	            msgLength++;
+
+	            if(status == 3){
+	                if(msg[3] == (msg[1]^msg[2]) ){
+	                	again = FALSE;
+						(*size) = msgLength;
+	                    return msg;
+	                }else {
+						msgLength = 0;
+						status = 0;
+					}
+	            }
+	        } else if (res == 0) {
+				waitFlag = TRUE;
+			}
+	   	}
+    }
+	numTimeout++;
+    return NULL;
+}
+
+int sendIFrame(int fd, char *frame, int size){
+	char *msg;
+	int msgSize;
+	while (STOP == FALSE && timeouts < lLayer.numTransmissions) {
+		tcflush(appLayer.fd, TCIOFLUSH);
+		write(appLayer.fd, frame, size);
+		numI++;
+		alarm(lLayer.timeout);
+
+		msg = readMessage(&msgSize);
+		if(msg != NULL){
+			if((unsigned char)analyse(msg) == (RR | nr)){
+				nr = nr^NR;
+				ns = ns^NS;
+				resetTimer();
+				free(msg);
+				return 0;
+			}
+			else if((unsigned char)analyse(msg) == (REJ | nr)){
+				numRej++;
+			}
+		}
+	}
+	return -1;
+}
+
+char *createIFrame(int fd, int type, int *frameSize){ //adiciona flags, chama makeplayload
+
+	char *frame = malloc(sizeof(char) * 20);
+	char *packet, *stuffed, *stuffedBCC;
+	int length = 7, stuffedLength, stuffedBCCLength;
+	char bcc;
+
+	frame[0] = FLAG;
+	frame[1] = ADDRESS_SEND;
+	frame[2] = ns;
+	frame[3] = frame[1]^frame[2];
+
+	switch (type) {
+		case START:
+		case END:
+			packet = createControlPacket(fd, type, &length);	//contem ja bcc
+			break;
+
+		case DATA:
+			length = lLayer.maxFrames + 4;
+			packet = createDataPacket(fd);
+			break;
+	}
+
+	stuffed = byteStuffing(packet, length, &stuffedLength);
+	bcc = getBCC2(packet, length);
+
+	if(20 < (7+stuffedLength)){
+		frame = realloc(frame, 7+stuffedLength);
+	}
+	memcpy(&frame[4], stuffed, stuffedLength);
+
+	stuffedBCC = byteStuffing(&bcc, 1, &stuffedBCCLength);
+	memcpy(&frame[4 + stuffedLength], stuffedBCC, stuffedBCCLength);
+	length = stuffedLength + stuffedBCCLength;
+	frame[4+length] = FLAG;
+
+	free(packet); free(stuffed); free(stuffedBCC);
+	(*frameSize) = (5+length);
+
+	return frame;
 }
 
 int llread(char *msg, int msgLength, int *pacSequence){
@@ -470,7 +477,6 @@ int llread(char *msg, int msgLength, int *pacSequence){
 		free(dataDestuffed);
 		return -1;
 	}
-	ns = ns ^ NS;
 	int size;
 	switch(type){
 		case START:
@@ -526,6 +532,7 @@ int llwrite(int fd){
 		}
 		free(frame);
 	}
+	if(STOP == FALSE) return -1;
 	return 0;
 }
 
@@ -592,6 +599,7 @@ int llclose(){
 			free(msg);
 		}
     }
+	if(STOP == FALSE) return -1;
     resetTimer();
     return 0;
 }
@@ -613,13 +621,21 @@ int transfer(){
 				}
 				break;
 			case TRANSFERING:
-				llwrite(fd);
-				printf("Transfered the file successfully\n");
-				state = DISCONNECT;
+				if(llwrite(fd) == -1){
+					printf("Error during transfer. Shutting down\n");
+					state = TERMINATE;
+
+				} else{
+					printf("Transfered the file successfully\n");
+					state = DISCONNECT;
+				}
 				break;
 			case DISCONNECT:
-				llclose();
-				printf("Disconnected\n");
+				if(llclose() == -1){
+					printf("Error while disconnecting\n");
+				} else{
+					printf("Disconnected successfully\n");
+				}
 				state = TERMINATE;
 				break;
 
@@ -627,8 +643,12 @@ int transfer(){
 				break;
 		}
 	}
+
+	printf("Read total of %d from file: %s\n", total, fileName);
+	printf("Sent %d I frames and received %d rejections. Timedout %d times\n", numI, numRej, numTimeout);
+
 	free(fileName);
-    close(fd);
+	close(fd);
     return 0;
 }
 
@@ -643,7 +663,6 @@ int receiver(){
 					res = llopen();
 				} else{
 					sendSUFrame(REJ | nr);
-					//nr = nr^NR;
 				}
 				break;
 			case TRANSFERING:
@@ -653,6 +672,7 @@ int receiver(){
 					res = llread(msg, size, &pacSequence);
 					if(res == 0){
 						sendSUFrame(RR | nr);
+						ns = ns ^ NS;
 						nr = nr^NR;
 						numI++;
 					} else {
@@ -677,7 +697,6 @@ int receiver(){
 				if(analyse(msg) == DISC){
 					res = llclose();
 					state = TERMINATE;
-					printf("OH MY GOD\n");
 				} else{
 					sendSUFrame(REJ | nr);
 				}
@@ -689,9 +708,13 @@ int receiver(){
 		free(msg);
 	}
 	printf("Wrote total of %d to file\n", total);
-	printf("Received %d frames and %d rejects. Timedout %d times", numI, numRej, numTimeout);
+	printf("Received %d frames and %d rejects. Timedout %d times\n", numI, numRej, numTimeout);
     return 0;
 }
+
+/*
+  ===================================================
+*/
 
 void defaultSettings(){
 	lLayer.numTransmissions = 3;
@@ -731,11 +754,10 @@ void manualSettings(char *baudRate, char *btf, char *retransmissions, char *time
 
 }
 
-int main(int argc, char** argv) {
-	struct termios oldtio,newtio;
-    if( (argc < 3) ||
-  	     ((strcmp("/dev/ttyS0", argv[1])!=0) &&
-  	      (strcmp("/dev/ttyS1", argv[1])!=0) )) {
+void checkArguments(int argc, char **argv){
+	if( (argc < 3) ||
+		 ((strcmp("/dev/ttyS0", argv[1])!=0) &&
+		  (strcmp("/dev/ttyS1", argv[1])!=0) )) {
 			  printf("Default Usage:\tnserial SerialPort ConnectionMode (FileName) \n\tex: nserial /dev/ttyS1 TRANSMITTER pinguim.gif\n\tex: nserial /dev/ttyS1 RECEIVER\n");
 				printf("Manual Usage:\tnserial SerialPort ConnectionMode (Filename) BaudRate (BytesPerFrame) (NumTransmissions) (Timeout)\n\tex: nserial /dev/ttyS1 TRANSMITTER pinguim.gif 38400 250 3 3\n\tex: nserial /dev/ttyS1 RECEIVER 38400\n");
 			exit(1);
@@ -743,8 +765,8 @@ int main(int argc, char** argv) {
 		sprintf(lLayer.port, "%s", argv[1]);
 	}
 
-    if(strcmp("TRANSMITTER", argv[2])==0){
-    	appLayer.transmission = TRANSMITTER;
+	if(strcmp("TRANSMITTER", argv[2])==0){
+		appLayer.transmission = TRANSMITTER;
 
 		if(argc == 4){
 			if(checkFile(argv[3]) == -1){
@@ -782,11 +804,38 @@ int main(int argc, char** argv) {
 		}
 	} else{
 		printf("ConnectionMode not recognized\n\tuse: TRANSMITTER||RECEIVER\n");
-      	exit(1);
+		exit(1);
+	}
+}
+
+void configSignals(){
+	struct sigaction actionAlarm;
+	actionAlarm.sa_handler = alarmHandler;
+	sigemptyset(&actionAlarm.sa_mask);
+	actionAlarm.sa_flags = 0;
+	if (sigaction(SIGALRM,&actionAlarm, NULL) < 0)
+	{
+		fprintf(stderr,"Unable to install SIGALRM handler\n");
+		exit(1);
 	}
 
-    appLayer.fd = open(lLayer.port, O_RDWR | O_NOCTTY );
+	struct sigaction actionIO;
+	actionIO.sa_handler = signalHandlerIO;
+	actionIO.sa_flags = 0;
+	if (sigaction(SIGIO,&actionIO, NULL) < 0)
+	{
+		fprintf(stderr,"Unable to install SIGIO handler\n");
+		exit(3);
+	}
+	fcntl(appLayer.fd, F_SETOWN, getpid());
+	fcntl(appLayer.fd, F_SETFL, FASYNC);
+}
 
+int main(int argc, char** argv) {
+
+	struct termios oldtio,newtio;
+	checkArguments(argc, argv);
+    appLayer.fd = open(lLayer.port, O_RDWR | O_NOCTTY );
     if (appLayer.fd <0) {perror(argv[1]); exit(-1); }
 
     /*
@@ -809,35 +858,13 @@ int main(int argc, char** argv) {
     newtio.c_cc[VTIME]    = 1;   /* inter-character timer unused */
     newtio.c_cc[VMIN]     = 0;   /* blocking read until 5 chars received */
 
-    struct sigaction actionAlarm;
-    actionAlarm.sa_handler = alarmHandler;
-    sigemptyset(&actionAlarm.sa_mask);
-    actionAlarm.sa_flags = 0;
-    if (sigaction(SIGALRM,&actionAlarm, NULL) < 0)
-    {
-        fprintf(stderr,"Unable to install SIGALRM handler\n");
-        exit(1);
-    }
-
-	struct sigaction actionIO;
-    actionIO.sa_handler = signalHandlerIO;
-    actionIO.sa_flags = 0;
-    if (sigaction(SIGIO,&actionIO, NULL) < 0)
-    {
-        fprintf(stderr,"Unable to install SIGIO handler\n");
-        exit(3);
-	}
-    fcntl(appLayer.fd, F_SETOWN, getpid());
-    fcntl(appLayer.fd, F_SETFL, FASYNC);
-
+	configSignals();
     tcflush(appLayer.fd, TCIOFLUSH);
 
     if ( tcsetattr(appLayer.fd,TCSANOW,&newtio) == -1) {
       perror("tcsetattr");
       exit(-1);
-
     }
-
     printf("New termios structure set\n");
 
 	if(appLayer.transmission == TRANSMITTER){
@@ -845,9 +872,8 @@ int main(int argc, char** argv) {
 	} else{
 		receiver();
 	}
-	printf("Total bytes read from file: %d\n", total);
-    if ( tcsetattr(appLayer.fd,TCSANOW,&oldtio) == -1) {
 
+    if ( tcsetattr(appLayer.fd,TCSANOW,&oldtio) == -1) {
       perror("tcsetattr");
       exit(-1);
     }
