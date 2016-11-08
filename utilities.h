@@ -39,13 +39,14 @@ typedef enum{
 }ConnectionMode;
 
 struct applicationLayer {
-	int fd;			/*Descritor correspondente à porta série*/
-	ConnectionMode transmission;	/*TRANSMITTER | RECEIVER*/
+	int fd;			/*Descritor correspondente ao ficheiro*/
+	ConnectionMode transmission;	/*TRANSMITTER || RECEIVER*/
+	unsigned int packetSeq; /*numero de sequencia do pacote de dados*/
 };
 
 typedef enum {
 	BEGIN, TRANSFERING, DISCONNECT, TERMINATE
-}State;
+}State;	/*Estados de um programa*/
 
 struct linkLayer {
 	char port[20]; 	/*Dispositivo /dev/ttySx, x = 0, 1*/
@@ -53,8 +54,10 @@ struct linkLayer {
 	unsigned int sequenceNumber;  	 /*Número de sequência da trama: 0, 1*/
 	unsigned int timeout;			 /*Valor do temporizador: 1 s*/
 	unsigned int numTransmissions;	 /*Número de tentativas em caso de falha*/
-	char frame[20];			/*Trama*/
 	unsigned int maxFrames;			/*numero de frames enviados em cada packet*/
+
+	volatile int numTimeouts;		/*numero de vezes que o temporizador ativou na espera actual*/
+	unsigned int ns, nr;			/*contadores do transmissor e emissor nas tramas I e U*/
 };
 
 int checkFile(char *fileName);
