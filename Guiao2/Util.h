@@ -25,4 +25,6 @@ int connectServer(char hostName[], int serverPort);		/*creates a connection to t
 int calculateDataPort(char address[]);					/*calculates a port number given an IP address */
 int login(int sockfd, char user[], char pass[]);		/*sends login data to ftp server*/
 int pasv(int sockfd, char hostName[]);					/*sends pasv and opens a connection with given port number*/
-int transfer();
+int retr(int sockfd, char path[]);						/*sends retr command and analyses answer*/
+int transfer(int datafd, char fileName[]);				/*receives file through second port*/
+int quit();												/*closes ftp connection*/

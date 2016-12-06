@@ -22,12 +22,15 @@ int parseAddress(struct urlInfo *info,char argv[]){
 	memcpy(info->path, &address[strlen(host)+1], strlen(address)-strlen(host)+1);
 
 	char *last = strrchr(info->path, '/');
-	char *path = malloc(512);
-	strncpy(path, info->path, strlen(info->path)-strlen(last));
-	memcpy(info->fileName, &last[1], strlen(last));
+	if(last == NULL){
+		strcpy(info->fileName, info->path);
+	} else {
+		memcpy(info->fileName, &last[1], strlen(last));
+	}
 
-
-	free(path);
+	// char *path = malloc(512);
+	// strncpy(path, info->path, strlen(info->path)-strlen(last));
+	//free(path);
 	return 0;
 }
 
@@ -90,6 +93,7 @@ int transfer(int datafd, char fileName[]){
 		fwrite(response, 1, bytes, f);
 	}
 
+	close(datafd);
 	fclose(f);
 	return 0;
 }
@@ -99,18 +103,18 @@ int login(int sockfd, char user[], char pass[]){
 	int bytes;
 
 	sprintf(send, "USER %s\n", user);
-	bytes = write(sockfd, send, strlen(send));
-	bytes = read(sockfd, response, sizeof(response));
+	write(sockfd, send, strlen(send));
+	read(sockfd, response, sizeof(response));
 
 	sprintf(send, "PASS %s\n", pass);
-	bytes = write(sockfd, send, strlen(send));
+	write(sockfd, send, strlen(send));
 	bytes = read(sockfd, response, sizeof(response));
 
 	write(0, response, bytes);
 
-	char *a = strtok(response, " ");
-	a = strtok(NULL, ".");
-	if(strcasecmp(a, "Login successful") != 0){
+	char *status = strtok(response, " ");
+	status = strtok(NULL, ".");
+	if(strcasecmp(status, "Login successful") != 0){
 		return -1;
 	}
 	return 0;
@@ -135,4 +139,28 @@ int pasv(int sockfd, char hostName[]){
 		return -1;
 	}
 	return datafd;
+}
+
+int retr(int sockfd, char path[]){
+	char file[512], response[512];
+	int bytes;
+	sprintf(file, "RETR %s\n", path);
+	write(sockfd, file, strlen(file));
+	bytes = read(sockfd, response, sizeof(response));
+	write(0, response, bytes);
+
+	char *status = strtok(response, " ");
+	status = strtok(NULL, ".");
+	if(strcasecmp(status, "Failed to open file") == 0){
+		return -1;
+	}
+	return 0;
+}
+
+int quit(int sockfd){
+
+	char quit[5] = "QUIT";
+	write(sockfd, quit, strlen(quit));
+	close(sockfd);
+	return 0;
 }

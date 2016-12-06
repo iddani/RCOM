@@ -25,15 +25,13 @@ int ftpTransfer(char argv[]){
 
 	datafd = pasv(sockfd, info.hostName);
 
-	char file[512];
-	sprintf(file, "RETR %s\n", info.path);
-	write(sockfd, file, strlen(file));
-	bytes = read(sockfd, response, sizeof(response));
-	write(0, response, bytes);
+	if(retr(sockfd, info.path) != 0){
+		exit(5);
+	}
 
-	//transfer(datafd, info.fileName);
+	transfer(datafd, info.fileName);
 
-	close(sockfd);
+	quit(sockfd);
 	return 0;
 }
 
