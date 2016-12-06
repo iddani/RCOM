@@ -89,8 +89,8 @@ int transfer(int datafd, char fileName[]){
 
 	int bytes;
 	char response[1024];
-	while ((bytes=read(datafd, response, sizeof(response))) > 0) {
-		fwrite(response, 1, bytes, f);
+	while ((bytes=read(datafd, response, sizeof(char)*1024)) > 0) {
+		fwrite(response, bytes, 1, f);
 	}
 
 	close(datafd);
