@@ -30,7 +30,7 @@ int ftpTransfer(char argv[]){
 	bytes = read(sockfd, response, sizeof(response));
 	write(0, response, bytes);
 
-	//transfer();
+	transfer();
 
 	close(sockfd);
 	return 0;
