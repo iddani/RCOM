@@ -19,9 +19,10 @@ int ftpTransfer(char argv[]){
 	bytes = read(sockfd, response, sizeof(response));
 	write(0, response, bytes);
 
-	login(sockfd, info.user, info.pass);
+	if(login(sockfd, info.user, info.pass) != 0){
+		exit(4);
+	}
 
-	//printf("%d %s\n", bytes,response);
 	datafd = pasv(sockfd, info.hostName);
 
 	char file[512];
@@ -30,7 +31,7 @@ int ftpTransfer(char argv[]){
 	bytes = read(sockfd, response, sizeof(response));
 	write(0, response, bytes);
 
-	transfer();
+	//transfer(datafd, info.fileName);
 
 	close(sockfd);
 	return 0;

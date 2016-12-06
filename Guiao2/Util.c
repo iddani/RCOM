@@ -22,8 +22,12 @@ int parseAddress(struct urlInfo *info,char argv[]){
 	memcpy(info->path, &address[strlen(host)+1], strlen(address)-strlen(host)+1);
 
 	char *last = strrchr(info->path, '/');
+	char *path = malloc(512);
+	strncpy(path, info->path, strlen(info->path)-strlen(last));
 	memcpy(info->fileName, &last[1], strlen(last));
 
+
+	free(path);
 	return 0;
 }
 
@@ -77,7 +81,16 @@ int calculateDataPort(char address[]){
 	return port;
 }
 
-int transfer(){
+int transfer(int datafd, char fileName[]){
+	FILE *f = fopen(fileName, "w");
+
+	int bytes;
+	char response[1024];
+	while ((bytes=read(datafd, response, sizeof(response))) > 0) {
+		fwrite(response, 1, bytes, f);
+	}
+
+	fclose(f);
 	return 0;
 }
 
@@ -94,6 +107,12 @@ int login(int sockfd, char user[], char pass[]){
 	bytes = read(sockfd, response, sizeof(response));
 
 	write(0, response, bytes);
+
+	char *a = strtok(response, " ");
+	a = strtok(NULL, ".");
+	if(strcasecmp(a, "Login successful") != 0){
+		return -1;
+	}
 	return 0;
 }
 
