@@ -3,6 +3,7 @@
 int parseAddress(struct urlInfo *info,char argv[]){
 
 	char *newUrl = strtok(argv, "[");
+	if(newUrl == NULL) return -1;
 	newUrl = strtok(NULL, ":");
 	if(newUrl == NULL) return -1;
 	sprintf(info->user, "%s",newUrl);
@@ -12,7 +13,8 @@ int parseAddress(struct urlInfo *info,char argv[]){
 	sprintf(info->pass, "%s", pass);
 
 	newUrl = strtok(NULL, "]");
-	char address[512];
+	if(newUrl == NULL) return -1;
+	char address[BUFFER_SIZE];
 	sprintf(address, "%s", newUrl);
 	char *host = strtok(newUrl, "/");
 	if(host == NULL) return -1;
