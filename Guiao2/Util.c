@@ -12,7 +12,7 @@ int parseAddress(struct urlInfo *info,char argv[]){
 	sprintf(info->pass, "%s", pass);
 
 	newUrl = strtok(NULL, "]");
-	char address[64];
+	char address[512];
 	sprintf(address, "%s", newUrl);
 	char *host = strtok(newUrl, "/");
 	if(host == NULL) return -1;
@@ -28,9 +28,6 @@ int parseAddress(struct urlInfo *info,char argv[]){
 		memcpy(info->fileName, &last[1], strlen(last));
 	}
 
-	// char *path = malloc(512);
-	// strncpy(path, info->path, strlen(info->path)-strlen(last));
-	//free(path);
 	return 0;
 }
 
@@ -77,9 +74,9 @@ int calculateDataPort(char address[]){
 	strtok(NULL, ",");
 	strtok(NULL, ",");
 	str = strtok(NULL, ",");
-	port = strtol(str, NULL, 10) * 256;
+	port = strtol(str, NULL, DECIMAL_BASE) * 256;
 	str = strtok(NULL, ",");
-	port += strtol(str, NULL, 10);
+	port += strtol(str, NULL, DECIMAL_BASE);
 
 	return port;
 }
@@ -88,8 +85,8 @@ int transfer(int datafd, char fileName[]){
 	FILE *f = fopen(fileName, "w");
 
 	int bytes;
-	char response[1024];
-	while ((bytes=read(datafd, response, sizeof(char)*1024)) > 0) {
+	char response[BUFFER_SIZE];
+	while ((bytes=read(datafd, response, sizeof(char)*BUFFER_SIZE)) > 0) {
 		fwrite(response, bytes, 1, f);
 	}
 
@@ -99,7 +96,7 @@ int transfer(int datafd, char fileName[]){
 }
 
 int login(int sockfd, char user[], char pass[]){
-	char send[64], response[512];
+	char send[NAME_LENGTH], response[BUFFER_SIZE];
 	int bytes;
 
 	sprintf(send, "USER %s\n", user);
@@ -122,7 +119,7 @@ int login(int sockfd, char user[], char pass[]){
 
 int pasv(int sockfd, char hostName[]){
 	int bytes, dataPort, datafd;
-	char pasv[8] = "PASV\n", response[512], *dataIP;
+	char pasv[8] = "PASV\n", response[BUFFER_SIZE], *dataIP;
 	bytes = write(sockfd, pasv, strlen(pasv));
 	bytes = read(sockfd, response, sizeof(response));
 	if(bytes < 0){
@@ -142,7 +139,7 @@ int pasv(int sockfd, char hostName[]){
 }
 
 int retr(int sockfd, char path[]){
-	char file[512], response[512];
+	char file[BUFFER_SIZE], response[BUFFER_SIZE];
 	int bytes;
 	sprintf(file, "RETR %s\n", path);
 	write(sockfd, file, strlen(file));

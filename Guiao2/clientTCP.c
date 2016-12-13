@@ -1,5 +1,3 @@
-/*      (C)2000 FEUP  */
-
 #include "Util.h"
 
 int ftpTransfer(char argv[]){
@@ -15,7 +13,7 @@ int ftpTransfer(char argv[]){
 		exit(3);
 	}
 
-	char response[512];
+	char response[BUFFER_SIZE];
 	bytes = read(sockfd, response, sizeof(response));
 	write(0, response, bytes);
 

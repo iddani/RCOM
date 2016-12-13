@@ -10,14 +10,18 @@
 #include <signal.h>
 #include <unistd.h>
 
-#define FTP_PORT 21
+#define FTP_PORT		21
+#define BUFFER_SIZE		1024
+#define DECIMAL_BASE	10
+#define NAME_LENGTH		128
+#define URL_LENGTH		256
 
 struct urlInfo {
-	char user[64];
-	char pass[64];
-	char hostName[128];
-	char path[256];
-	char fileName[64];
+	char user[NAME_LENGTH];
+	char pass[NAME_LENGTH];
+	char hostName[URL_LENGTH];
+	char path[URL_LENGTH];
+	char fileName[NAME_LENGTH];
 };
 
 int parseAddress(struct urlInfo *info, char argv[]);	/*retrieves the information from the url*/
